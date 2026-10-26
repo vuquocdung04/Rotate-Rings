@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8571142ed6e23c0488c2049dc39c891f, type: 3}
+  m_Name: RewardCatalogSO
+  m_EditorClassIdentifier: Assembly-CSharp::RewardCatalogSO
+  rewards:
+  - icon: {fileID: -528663742, guid: 6e4dedd810d7b5d4c81a5732578de784, type: 3}
+    id: Coin
+    category: 0
+    displayStyle: 0
+    suffix: 
+  - icon: {fileID: 21300000, guid: 36116bb21810ae541a9f8b1374ffaf79, type: 3}
+    id: Heart
+    category: 0
+    displayStyle: 2
+    suffix: 
+  - icon: {fileID: 21300000, guid: 57253a0254bc2c44c924fbda4ce797fb, type: 3}
+    id: HeartUnlimited
+    category: 0
+    displayStyle: 3
+    suffix: 

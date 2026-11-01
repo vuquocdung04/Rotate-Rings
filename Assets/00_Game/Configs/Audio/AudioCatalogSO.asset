@@ -12,7 +12,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 12a65e260967c474a8c5ba83cb8564f4, type: 3}
   m_Name: AudioCatalogSO
   m_EditorClassIdentifier: 
-  audioFolder: Assets/00_Game/Core/LoadingScene/Audio
   audioConfigs:
   - key: Click
     variants:
@@ -64,3 +63,32 @@ MonoBehaviour:
     volume: 1
     minPitch: 0.7
     maxPitch: 1.1
+  - key: RingRatchet
+    variants:
+    - {fileID: 8300000, guid: 75c5cb342de3b674a947fc6dc0c7c552, type: 3}
+    - {fileID: 8300000, guid: d90d0c0e85ec50f418e6e44b49668227, type: 3}
+    - {fileID: 8300000, guid: f739bc8b044ce0746bdb41545a59c31a, type: 3}
+    - {fileID: 8300000, guid: 410510c12d620ae42a1dd69329de99cb, type: 3}
+    - {fileID: 8300000, guid: 594557cb6862af4469571bd4f33eeca2, type: 3}
+    - {fileID: 8300000, guid: 92aa707baa93dae4b94d38a26e89e5eb, type: 3}
+    - {fileID: 8300000, guid: 812db0ce4dbd9da47a9a7c8db68aa7ed, type: 3}
+    - {fileID: 8300000, guid: 71fde04e75cbcf74bac973e6d4920de8, type: 3}
+    - {fileID: 8300000, guid: c72888790e755924c8f7a5ed157eef6e, type: 3}
+    volume: 0.8
+    minPitch: 0.94
+    maxPitch: 1.06
+  - key: RingBreak
+    variants:
+    - {fileID: 8300000, guid: 32dba0946326b1045a95c6e52fdfa272, type: 3}
+    - {fileID: 8300000, guid: f22869dd0a06f71409403cd619ff7e93, type: 3}
+    - {fileID: 8300000, guid: 4712fb9019f09744599b0d4810aeacd8, type: 3}
+    - {fileID: 8300000, guid: 50e06b3a01f087044b5e2361b4fc1b42, type: 3}
+    volume: 1
+    minPitch: 0.95
+    maxPitch: 1.05
+  - key: RingBlocked
+    variants:
+    - {fileID: 8300000, guid: 2eb7d4d7af8a9114aa2dcc2b5728fc08, type: 3}
+    volume: 1
+    minPitch: 0.95
+    maxPitch: 1.05

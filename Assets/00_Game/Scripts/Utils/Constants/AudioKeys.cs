@@ -9,6 +9,9 @@ public static class AudioKeys
     public const string COINS = "Coins";
     public const string MAIN_MENU_MUSIC_COVER_2 = "Main Menu Music (Cover) 2";
     public const string NORMAL_LEVEL_MUSIC_COVER_1 = "Normal Level Music (Cover) 1";
+    public const string RING_BLOCKED = "RingBlocked";
+    public const string RING_BREAK = "RingBreak";
+    public const string RING_RATCHET = "RingRatchet";
     public const string SFX_LOSE = "sfx-Lose";
     public const string SFX_REWARD_GIFTBOX = "sfx-RewardGiftbox";
     public const string SFX_WIN = "sfx-Win";
@@ -20,6 +23,9 @@ public static class AudioKeys
         COINS,
         MAIN_MENU_MUSIC_COVER_2,
         NORMAL_LEVEL_MUSIC_COVER_1,
+        RING_BLOCKED,
+        RING_BREAK,
+        RING_RATCHET,
         SFX_LOSE,
         SFX_REWARD_GIFTBOX,
         SFX_WIN,

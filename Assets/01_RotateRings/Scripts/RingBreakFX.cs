@@ -3,12 +3,12 @@ using UnityEngine;
 namespace RotateRings
 {
     /// <summary>
-    /// Bursts a ring into chunks laid out along its arc.
-    /// Uses tex_sequence_011 (2x2 flipbook of rock chunks): each particle picks one random frame and is tinted with the ring color.
+    /// Bursts a piece into chunks laid out along its path.
+    /// Uses tex_sequence_011 (2x2 flipbook of rock chunks): each particle picks one random frame and is tinted with the piece color.
     /// </summary>
     public static class RingBreakFX
     {
-        public static void Spawn(Ring ring)
+        public static void Spawn(Piece ring)
         {
             if (ring.breakMaterial == null) return;
 
@@ -59,20 +59,19 @@ namespace RotateRings
 
             ps.Play();
 
-            // Emit along the body arc (skip the gap).
-            float gapHalf = ring.gapAngle * 0.5f;
-            float from = ring.gapCenter + gapHalf;
-            float to = ring.gapCenter + 360f - gapHalf;
-            float arcLen = (to - from) * Mathf.Deg2Rad * ring.radius;
-            int count = Mathf.Max(6, Mathf.RoundToInt(arcLen / (t * 0.8f)));
+            // Emit along the body path, pushed away from the piece center.
+            float length = ring.shape.Length;
+            int count = Mathf.Max(6, Mathf.RoundToInt(length / (t * 0.8f)));
 
             Vector2 center = ring.Center;
             var ep = new ParticleSystem.EmitParams { applyShapeToPosition = false };
             for (int i = 0; i < count; i++)
             {
-                float a = (Mathf.Lerp(from, to, (i + Random.value) / count) + ring.Angle) * Mathf.Deg2Rad;
-                Vector2 dir = new(Mathf.Cos(a), Mathf.Sin(a));
-                Vector2 pos = center + dir * ring.radius + Random.insideUnitCircle * t * 0.35f;
+                Vector2 local = ring.shape.Evaluate(length * (i + Random.value) / count, out _);
+                Vector2 onPath = ring.transform.TransformPoint(local);
+                Vector2 dir = onPath - center;
+                dir = dir.sqrMagnitude > 1e-4f ? dir.normalized : Random.insideUnitCircle.normalized;
+                Vector2 pos = onPath + Random.insideUnitCircle * t * 0.35f;
 
                 ep.position = new Vector3(pos.x, pos.y, -1f);
                 ep.velocity = (Vector3)(dir * Random.Range(0.8f, 2.6f) + Vector2.up * Random.Range(0.5f, 2f));

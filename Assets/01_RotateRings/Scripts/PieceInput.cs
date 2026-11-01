@@ -3,15 +3,19 @@ using UnityEngine.InputSystem;
 
 namespace RotateRings
 {
-    /// <summary>Press on/inside a ring, then drag around its center to rotate it.</summary>
-    public class RingInput : MonoBehaviour
+    /// <summary>
+    /// Press on a piece (or inside a ring) and drag: rings rotate with the pointer's angle around their center,
+    /// pipes follow the pointer projected on their slide axis.
+    /// </summary>
+    public class PieceInput : MonoBehaviour
     {
         public Camera cam;
-        [Tooltip("Touching within this many thicknesses of a ring body picks that ring over interior hits.")]
+        [Tooltip("Touching within this many thicknesses of a body picks that piece over ring-interior hits.")]
         public float bodyPickScale = 1.5f;
 
-        Ring active;
+        Piece active;
         float lastAngle;
+        Vector2 lastPoint;
 
         void Awake()
         {
@@ -35,14 +39,23 @@ namespace RotateRings
                 {
                     active.BeginDrag();
                     lastAngle = AngleAround(active, wp);
+                    lastPoint = wp;
                 }
             }
             else if (active != null && pointer.press.isPressed)
             {
-                float a = AngleAround(active, wp);
-                float delta = Mathf.DeltaAngle(lastAngle, a);
-                lastAngle = a;
-                active.Drag(delta);
+                if (active.Motion == MotionKind.Slide)
+                {
+                    active.Drag(Vector2.Dot(wp - lastPoint, active.SlideAxis));
+                    lastPoint = wp;
+                }
+                else
+                {
+                    float a = AngleAround(active, wp);
+                    float delta = Mathf.DeltaAngle(lastAngle, a);
+                    lastAngle = a;
+                    active.Drag(delta);
+                }
             }
 
             if (active != null && pointer.press.wasReleasedThisFrame)
@@ -52,29 +65,27 @@ namespace RotateRings
             }
         }
 
-        static float AngleAround(Ring r, Vector2 wp)
+        static float AngleAround(Piece p, Vector2 wp)
         {
-            Vector2 d = wp - r.Center;
+            Vector2 d = wp - p.Center;
             return Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;
         }
 
-        Ring Pick(Vector2 wp)
+        Piece Pick(Vector2 wp)
         {
-            Ring best = null;
+            Piece best = null;
             float bestScore = float.MaxValue;
-            foreach (var r in Ring.All)
+            foreach (var p in Piece.All)
             {
-                if (r == null || r.IsBroken) continue;
-                float dist = Vector2.Distance(wp, r.Center);
-                if (dist > r.radius + r.thickness) continue;
+                if (p == null || p.IsBroken) continue;
+                if (!p.TryPick(wp, bodyPickScale, out bool onBody, out float interiorScore)) continue;
 
-                // Body hits beat interior hits; among body hits, the ring drawn on top wins.
-                bool onBody = Mathf.Abs(dist - r.radius) <= r.thickness * bodyPickScale;
-                float score = onBody ? -10000f - r.sortingOrder : dist / r.radius;
+                // Body hits beat interior hits; among body hits, the piece drawn on top wins.
+                float score = onBody ? -10000f - p.sortingOrder : interiorScore;
                 if (score < bestScore)
                 {
                     bestScore = score;
-                    best = r;
+                    best = p;
                 }
             }
             return best;

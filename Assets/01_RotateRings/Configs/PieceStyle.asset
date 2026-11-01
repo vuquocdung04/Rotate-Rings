@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e40533cece6f8e24995e43f08c6d4881, type: 3}
+  m_Name: PieceStyle
+  m_EditorClassIdentifier: Assembly-CSharp::RotateRings.PieceStyle
+  thickness: 0.34
+  styleRow: 0
+  pipeCornerRadius: 0.4
+  stemWidth: 0.3
+  sleeveSize: {x: 0.6, y: 0.45}
+  sleeveOffset: {x: 0, y: 0.03}
+  linkSprite: {fileID: 21300000, guid: 757a2b1b441618e47a819a611aab8a93, type: 3}
+  armLength: 0.9
+  clampSize: {x: 0.56, y: 0.72}
+  clampSprite: {fileID: 21300000, guid: 7bdb85b956df88242b2dfaa6ed0e042d, type: 3}
+  body: {fileID: 2100000, guid: 14f0be9d9adddd2468c07a3d296af074, type: 2}
+  shadow: {fileID: 2100000, guid: d685f89530e3daf469bd61ba6df4b8b7, type: 2}
+  outline: {fileID: 2100000, guid: 463ba76bc30babc4fa63ce4753b90637, type: 2}
+  breakFx: {fileID: 2100000, guid: 6fdd7193eb9db2d4e81b5950fee0d124, type: 2}
+  spark: {fileID: 2100000, guid: 57f38c400b5f59c4dbede425a03e7cb4, type: 2}
+  link: {fileID: 2100000, guid: 1175c62ea8ffcbd4695c4f329808cfc2, type: 2}
+  clamp: {fileID: 2100000, guid: a721861a94173bc4fb985e3febec3928, type: 2}
+  palette:
+  - {r: 0.12, g: 0.64, b: 0.88, a: 1}
+  - {r: 0.95, g: 0.55, b: 0.12, a: 1}
+  - {r: 0.56, g: 0.27, b: 0.91, a: 1}
+  - {r: 0.89, g: 0.19, b: 0.18, a: 1}
+  - {r: 0.24, g: 0.72, b: 0.3, a: 1}
+  - {r: 0.22, g: 0.4, b: 0.86, a: 1}
+  - {r: 0.3, g: 0.75, b: 0.95, a: 1}
+  - {r: 0.98, g: 0.78, b: 0.15, a: 1}
+  - {r: 0.95, g: 0.42, b: 0.65, a: 1}

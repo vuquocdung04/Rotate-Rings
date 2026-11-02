@@ -6,6 +6,9 @@ namespace RotateRings
 {
     public enum PieceKind { Ring, Pipe }
 
+    /// <summary>Body material; every finish is tinted with the piece color.</summary>
+    public enum Finish { Plastic, Wood, Marble }
+
     /// <summary>
     /// One level, saved as JSON (JsonUtility). Shapes are stored with their full parameters, not as preset names,
     /// so editing a preset later never changes (or breaks) existing levels.
@@ -30,6 +33,7 @@ namespace RotateRings
         public float rot;
         [Tooltip("Index into PieceStyle.palette.")]
         public int color;
+        public Finish finish;
 
         // Ring
         public float radius = 1.25f;

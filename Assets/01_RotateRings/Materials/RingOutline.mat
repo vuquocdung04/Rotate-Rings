@@ -34,10 +34,12 @@ Material:
     m_Ints: []
     m_Floats:
     - _AlphaClip: 0.4
+    - _BodyTiling: 0
     - _Gloss: 32
     - _MidGray: 0.5
     - _ShadeStrength: 0
     - _Specular: 0
+    - _TileThick: 6
     m_Colors:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _LightDir: {r: -0.4, g: 0.6, b: -1, a: 0}

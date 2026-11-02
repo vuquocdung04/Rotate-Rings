@@ -45,7 +45,7 @@ namespace RotateRings
             go.transform.SetPositionAndRotation(new Vector3(d.pos.x, d.pos.y, 0f), Quaternion.Euler(0f, 0f, d.rot));
 
             var p = go.AddComponent<Piece>();
-            style.ApplyTo(p, d.color);
+            style.ApplyTo(p, d.color, d.finish);
             if (d.kind == PieceKind.Ring)
             {
                 var ring = go.AddComponent<RingShape>();
@@ -70,11 +70,10 @@ namespace RotateRings
             go.transform.SetParent(parent.transform, false);
             var link = go.AddComponent<PieceLink>();
             link.child = child;
-            link.stemWidth = style.stemWidth;
-            link.sleeveSize = style.sleeveSize;
-            link.sleeveOffset = sleeveOffset;
-            link.stem = MakeSprite("Stem", go.transform, style.linkSprite, style.link);
-            link.sleeve = MakeSprite("Sleeve", go.transform, style.linkSprite, style.link);
+            link.stem = MakeSprite("Stem", go.transform, null, null);
+            link.sleeve = MakeSprite("Sleeve", go.transform, null, null);
+            style.StyleLink(link, parent);
+            if (!link.metalSleeve) link.sleeveOffset = sleeveOffset; // saved per link
             link.Layout();
             return link;
         }
@@ -173,6 +172,7 @@ namespace RotateRings
                     pos = Round(t.position),
                     rot = Round(Mathf.Repeat(t.eulerAngles.z, 360f)),
                     color = style.NearestColorIndex(p.color),
+                    finish = p.finish,
                 };
                 if (p.TryGetComponent<RingShape>(out var ring))
                 {

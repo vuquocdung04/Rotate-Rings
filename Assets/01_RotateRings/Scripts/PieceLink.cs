@@ -19,6 +19,8 @@ namespace RotateRings
         public Vector2 sleeveOffset = new(0f, 0.03f);
         public SpriteRenderer stem;
         public SpriteRenderer sleeve;
+        [Tooltip("Sleeve is a metal clip drawn in its own colors (not tinted with the parent's color).")]
+        public bool metalSleeve;
 
         public Piece Parent { get; private set; }
         public override Vector2 GripWorldPos => transform.TransformPoint(gripLocal);
@@ -89,7 +91,7 @@ namespace RotateRings
             SetWorldSize(stem, new Vector2(len + Parent.thickness, stemWidth));
 
             Tint(stem, Parent.color);
-            Tint(sleeve, Parent.color);
+            Tint(sleeve, metalSleeve ? Color.white : Parent.color);
             // Stem runs under both pieces; only the sleeve is drawn on top.
             stem.sortingOrder = Mathf.Min(Parent.sortingOrder, child.sortingOrder) - 1;
             sleeve.sortingOrder = Mathf.Max(Parent.sortingOrder, child.sortingOrder) + 2;

@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
+using Sirenix.OdinInspector;
+using Sirenix.OdinInspector.Editor;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -7,51 +9,306 @@ using UnityEngine;
 namespace RotateRings.EditorTools
 {
     /// <summary>
-    /// Tools > Rotate Rings > Level Editor.
+    /// Tools > Rotate Rings > Level Editor (Odin window).
     /// Place presets from the ShapeLibrary, connect them with links / arms / clamps by clicking in the Scene view,
-    /// apply arm layouts in one click, and save/load levels as JSON. Everything is built through LevelBuilder,
-    /// exactly like at runtime.
+    /// apply arm layouts in one click, check / regenerate solvability, and save/load levels as JSON.
+    /// Everything is built through LevelBuilder, exactly like at runtime.
     /// </summary>
-    public class LevelEditorWindow : EditorWindow
+    public class LevelEditorWindow : OdinEditorWindow
     {
         enum Mode { Select, Link, Arm, Clamp, Delete }
 
         const string LevelsDir = "Assets/01_RotateRings/Levels";
         const string RootName = "Level";
         const float TileW = 78f, TileH = 74f;
-
-        PieceStyle style;
-        ShapeLibrary library;
-        Transform root;
-        string levelName = "level_001";
-        float grid = 0.25f;
-        float angleStep = 15f;
-        int colorIndex;
-        Mode mode;
-        Piece linkFrom;
-        Vector2 scroll;
-        bool showAssets;
-        int rerollAttempts = 40;
-        float solveSeconds = 2f;
-        LevelSolver.Result solveResult;
-        bool showSolution;
-
-        static GUIStyle sectionTitle, tileLabel, helpText, moveButton;
-        static readonly List<Vector2> IconPoints = new();
+        const string Main = "Main";
 
         [MenuItem("Tools/Rotate Rings/Level Editor")]
         static void Open()
         {
             var w = GetWindow<LevelEditorWindow>("Level Editor");
-            w.minSize = new Vector2(300f, 400f);
+            w.minSize = new Vector2(320f, 400f);
         }
 
-        void OnEnable()
+        // ---------- Assets ----------
+
+        [FoldoutGroup("Assets", Expanded = false), Required, SerializeField]
+        PieceStyle style;
+
+        [FoldoutGroup("Assets"), Required, SerializeField]
+        ShapeLibrary library;
+
+        [FoldoutGroup("Assets"), Button("Rebuild Assets"), ShowIf(nameof(AssetsReady))]
+        [PropertyTooltip("Re-imports textures, rebuilds materials, sprites and the style, and refreshes the pieces in this scene.")]
+        void RebuildAssets() => RingAssetSetup.Rebuild(out style, out library);
+
+        [Button("Create Assets (style, library, materials)", ButtonSizes.Large), GUIColor(0.4f, 0.9f, 0.5f)]
+        [HideIf(nameof(AssetsReady)), PropertyOrder(1)]
+        void CreateAssets() => RingAssetSetup.Rebuild(out style, out library);
+
+        // ---------- No Level root yet ----------
+
+        [Button("Open Level Editor Scene", ButtonSizes.Large), GUIColor(0.4f, 0.8f, 1f), ShowIf(nameof(NeedsRoot)), PropertyOrder(2)]
+        [InfoBox("No 'Level' root in this scene.")]
+        void OpenEditorScene()
         {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            if (File.Exists(RingAssetSetup.EditorScenePath))
+            {
+                EditorSceneManager.OpenScene(RingAssetSetup.EditorScenePath);
+                root = FindRoot();
+                return;
+            }
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            root = CreateRoot();
+            EditorSceneManager.SaveScene(scene, RingAssetSetup.EditorScenePath);
+        }
+
+        [Button("Create Level Root here  (+ camera for play testing)"), ShowIf(nameof(NeedsRoot)), PropertyOrder(3)]
+        void CreateRootHere() => root = CreateRoot();
+
+        // ---------- Level ----------
+
+        [ShowIfGroup(Main, Condition = nameof(Ready))]
+        [BoxGroup(Main + "/Level"), HorizontalGroup(Main + "/Level/File"), HideLabel, SerializeField]
+        string levelName = "level_001";
+
+        [HorizontalGroup(Main + "/Level/File", Width = 46), Button("New")]
+        void BtnNew() => NewLevel();
+
+        [HorizontalGroup(Main + "/Level/File", Width = 46), Button("Load")]
+        void BtnLoad() => LoadLevel();
+
+        [HorizontalGroup(Main + "/Level/File", Width = 46), Button("Save"), GUIColor(0.4f, 0.9f, 0.5f)]
+        void BtnSave() => SaveLevel();
+
+        [HorizontalGroup(Main + "/Level/Snap"), LabelWidth(34), MinValue(0), SerializeField]
+        float grid = 0.25f;
+
+        [HorizontalGroup(Main + "/Level/Snap"), LabelText("Angle"), LabelWidth(40), MinValue(1), SerializeField]
+        float angleStep = 15f;
+
+        [HorizontalGroup(Main + "/Level/Snap", Width = 70), Button("Snap All")]
+        void BtnSnapAll() => SnapAll();
+
+        // ---------- Scene click mode ----------
+
+        [BoxGroup(Main + "/Scene Click"), EnumToggleButtons, HideLabel, SerializeField]
+        [OnValueChanged(nameof(OnModeChanged)), InfoBox("$" + nameof(ModeHelp), InfoMessageType.None)]
+        Mode mode;
+
+        string ModeHelp => mode switch
+        {
+            Mode.Link => linkFrom == null
+                ? "Click the PARENT piece (the one that holds)."
+                : $"Parent: {linkFrom.name}. Now click the CHILD. Esc cancels.",
+            Mode.Arm => "Click on a ring or pipe: adds an arm pointing toward the click.",
+            Mode.Clamp => "Click on a pipe: adds a metal clamp there.",
+            Mode.Delete => "Click a clamp, sleeve (removes the link), arm, or piece.",
+            _ => "Normal selection. Move/rotate with Unity's tools; Save snaps to the grid.",
+        };
+
+        void OnModeChanged()
+        {
+            linkFrom = null;
+            SceneView.RepaintAll();
+        }
+
+        // ---------- Shapes ----------
+
+        [BoxGroup(Main + "/Shapes  ·  click to place at the Scene view center"), OnInspectorGUI]
+        void DrawShapes()
+        {
+            InitStyles();
+            DrawTiles(PieceKind.Ring, "Rings");
+            EditorGUILayout.Space(4f);
+            DrawTiles(PieceKind.Pipe, "Pipes");
+        }
+
+        // ---------- Color / finish ----------
+
+        [BoxGroup(Main + "/Color  ·  Finish"), EnumToggleButtons, HideLabel, SerializeField]
+        Finish finish;
+
+        [BoxGroup(Main + "/Color  ·  Finish"), OnInspectorGUI]
+        void DrawPalette()
+        {
+            InitStyles();
+            if (style.finishes.Count == 0)
+                EditorGUILayout.LabelField("Style has no finishes yet: open Assets and click Rebuild Assets.", helpText);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                for (int i = 0; i < style.palette.Count; i++)
+                {
+                    Rect r = GUILayoutUtility.GetRect(24f, 24f, GUILayout.Width(24f), GUILayout.Height(24f));
+                    if (i == colorIndex) EditorGUI.DrawRect(r, Color.white);
+                    EditorGUI.DrawRect(new Rect(r.x + 3f, r.y + 3f, r.width - 6f, r.height - 6f), style.palette[i]);
+                    if (GUI.Button(r, GUIContent.none, GUIStyle.none)) colorIndex = i;
+                }
+                GUILayout.FlexibleSpace();
+            }
+        }
+
+        [HorizontalGroup(Main + "/Color  ·  Finish/Apply"), Button("Apply Color"), EnableIf(nameof(HasSelection))]
+        void BtnApplyColor() => ApplyColorToSelection();
+
+        [HorizontalGroup(Main + "/Color  ·  Finish/Apply"), Button("$" + nameof(ApplyFinishLabel)), EnableIf(nameof(HasSelection))]
+        void BtnApplyFinish() => ApplyFinishToSelection();
+
+        [HorizontalGroup(Main + "/Color  ·  Finish/Apply"), Button("Both"), EnableIf(nameof(HasSelection))]
+        void BtnApplyBoth()
+        {
+            ApplyColorToSelection();
+            ApplyFinishToSelection();
+        }
+
+        string ApplyFinishLabel => $"Apply {finish}";
+
+        // ---------- Selection ----------
+
+        [BoxGroup(Main + "/Selection", false), OnInspectorGUI]
+        void DrawSelection()
+        {
+            InitStyles();
+            var selected = SelectedPieces();
+            EditorGUILayout.LabelField(SelectionTitle, EditorStyles.boldLabel);
+            if (selected.Count == 0)
+            {
+                EditorGUILayout.LabelField("Select a piece to rotate it or add arm layouts.", helpText);
+                return;
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button($"Rotate left {angleStep}°", EditorStyles.miniButtonLeft)) RotateSelection(angleStep);
+                if (GUILayout.Button($"Rotate right {angleStep}°", EditorStyles.miniButtonRight)) RotateSelection(-angleStep);
+            }
+            if (selected.Count != 1) return;
+
+            var piece = selected[0];
+            EditorGUILayout.Space(4f);
+            EditorGUILayout.LabelField("Arms  ·  replaces the current arms", EditorStyles.miniBoldLabel);
+            var layouts = ArmLayouts.For(piece);
+            const int perRow = 2;
+            for (int i = 0; i < layouts.Count; i += perRow)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    for (int j = i; j < Mathf.Min(i + perRow, layouts.Count); j++)
+                        if (GUILayout.Button(layouts[j].label, GUILayout.Height(22))) ApplyArmLayout(piece, layouts[j]);
+                }
+            }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUIUtility.labelWidth = 80f;
+                EditorGUI.BeginChangeCheck();
+                float len = EditorGUILayout.FloatField("Arm length", style.armLength);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Undo.RecordObject(style, "Arm length");
+                    style.armLength = len;
+                    EditorUtility.SetDirty(style);
+                }
+                EditorGUIUtility.labelWidth = 0f;
+                if (GUILayout.Button("Clear Arms", EditorStyles.miniButton, GUILayout.Width(80))) ClearArms(piece);
+            }
+        }
+
+        string SelectionTitle
+        {
+            get
+            {
+                var selected = SelectedPieces();
+                return selected.Count == 1 ? $"Selected  ·  {selected[0].name}" : $"Selected  ·  {selected.Count} pieces";
+            }
+        }
+
+        // ---------- Solvability ----------
+
+        [BoxGroup(Main + "/Solvability"), HorizontalGroup(Main + "/Solvability/Params"), LabelWidth(58), MinValue(1), SerializeField]
+        [LabelText("Attempts")]
+        int rerollAttempts = 40;
+
+        [HorizontalGroup(Main + "/Solvability/Params"), LabelWidth(52), MinValue(0.1), LabelText("Max sec"), SerializeField]
+        float solveSeconds = 2f;
+
+        [HorizontalGroup(Main + "/Solvability/Run"), Button("Check Solvable", ButtonSizes.Medium)]
+        void BtnCheck() => CheckSolvable();
+
+        [HorizontalGroup(Main + "/Solvability/Run"), Button("$" + nameof(RegenerateLabel), ButtonSizes.Medium), GUIColor(0.4f, 0.8f, 1f)]
+        void BtnRegenerate() => RegenerateSolvable();
+
+        string RegenerateLabel => HasSelection ? "Regenerate (selected rings)" : "Regenerate (all rings)";
+
+        [BoxGroup(Main + "/Solvability"), OnInspectorGUI]
+        void DrawSolveResult()
+        {
+            InitStyles();
+            EditorGUILayout.LabelField(
+                "Regenerate keeps positions, links, arms and clamps; it only re-rolls ring rotations " +
+                $"(snapped to {angleStep}°) until the level is solvable, keeping the hardest of the attempts. " +
+                "Select rings first to re-roll only those. Max sec = search time per attempt.", helpText);
+
+            if (solveResult == null) return;
+            EditorGUILayout.HelpBox(solveResult.Summary, solveResult.solved ? MessageType.Info : MessageType.Warning);
+            if (!solveResult.solved || solveResult.moves.Count == 0) return;
+            showSolution = EditorGUILayout.Foldout(showSolution, $"Solution ({solveResult.moves.Count} moves) · click to select the piece", true);
+            if (!showSolution) return;
+            for (int i = 0; i < solveResult.moves.Count; i++)
+            {
+                var move = solveResult.moves[i];
+                if (GUILayout.Button($"{i + 1}. {move}", moveButton) && move.piece != null)
+                {
+                    Selection.activeGameObject = move.piece.gameObject;
+                    EditorGUIUtility.PingObject(move.piece.gameObject);
+                }
+            }
+        }
+
+        // ---------- Footer ----------
+
+        [BoxGroup(Main + "/Footer", false), OnInspectorGUI]
+        void DrawFooter()
+        {
+            var counts = $"Pieces {root.GetComponentsInChildren<Piece>(true).Length}   ·   " +
+                         $"Links {root.GetComponentsInChildren<PieceLink>(true).Length}   ·   " +
+                         $"Arms {root.GetComponentsInChildren<PieceArm>(true).Length}   ·   " +
+                         $"Clamps {root.GetComponentsInChildren<PipeClamp>(true).Length}";
+            EditorGUILayout.LabelField(counts, EditorStyles.centeredGreyMiniLabel);
+        }
+
+        // ---------- State ----------
+
+        Transform root;
+        int colorIndex;
+        Piece linkFrom;
+        LevelSolver.Result solveResult;
+        bool showSolution;
+
+        static GUIStyle tileLabel, helpText, moveButton;
+        static readonly List<Vector2> IconPoints = new();
+
+        bool AssetsReady => style != null && library != null;
+        bool NeedsRoot => AssetsReady && Root == null;
+        bool Ready => AssetsReady && Root != null;
+        bool HasSelection => SelectedPieces().Count > 0;
+
+        Transform Root
+        {
+            get
+            {
+                if (root == null) root = FindRoot();
+                return root;
+            }
+        }
+
+        protected override void OnEnable()
+        {
+            base.OnEnable();
             SceneView.duringSceneGui += OnSceneGUI;
             Selection.selectionChanged += Repaint;
-            style = AssetDatabase.LoadAssetAtPath<PieceStyle>(RingSceneBuilder.StylePath);
-            library = AssetDatabase.LoadAssetAtPath<ShapeLibrary>(RingSceneBuilder.LibraryPath);
+            if (style == null) style = AssetDatabase.LoadAssetAtPath<PieceStyle>(RingAssetSetup.StylePath);
+            if (library == null) library = AssetDatabase.LoadAssetAtPath<ShapeLibrary>(RingAssetSetup.LibraryPath);
         }
 
         void OnDisable()
@@ -62,128 +319,16 @@ namespace RotateRings.EditorTools
 
         static void InitStyles()
         {
-            if (sectionTitle != null) return;
-            sectionTitle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 12 };
+            if (tileLabel != null) return;
             tileLabel = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Clip };
             helpText = new GUIStyle(EditorStyles.wordWrappedMiniLabel) { richText = true };
             moveButton = new GUIStyle(EditorStyles.miniButton) { alignment = TextAnchor.MiddleLeft, wordWrap = true };
         }
 
-        // ---------- Window ----------
-
-        void OnGUI()
-        {
-            InitStyles();
-            scroll = EditorGUILayout.BeginScrollView(scroll);
-
-            if (!DrawAssets())
-            {
-                EditorGUILayout.EndScrollView();
-                return;
-            }
-
-            if (root == null) root = FindRoot();
-            if (root == null)
-            {
-                using (Section("Level"))
-                {
-                    EditorGUILayout.HelpBox("No 'Level' root in this scene.", MessageType.Info);
-                    if (GUILayout.Button("Create Level Root  (+ camera for play testing)", GUILayout.Height(28))) root = CreateRoot();
-                }
-                EditorGUILayout.EndScrollView();
-                return;
-            }
-
-            DrawLevel();
-            DrawMode();
-            DrawShapes();
-            DrawColors();
-            DrawSelection();
-            DrawSolver();
-            DrawFooter();
-
-            EditorGUILayout.EndScrollView();
-        }
-
-        bool DrawAssets()
-        {
-            bool ready = style != null && library != null;
-            showAssets = EditorGUILayout.Foldout(showAssets || !ready, "Assets", true);
-            if (showAssets || !ready)
-            {
-                EditorGUI.indentLevel++;
-                style = (PieceStyle)EditorGUILayout.ObjectField("Piece Style", style, typeof(PieceStyle), false);
-                library = (ShapeLibrary)EditorGUILayout.ObjectField("Shape Library", library, typeof(ShapeLibrary), false);
-                EditorGUI.indentLevel--;
-            }
-            if (style != null && library != null) return true;
-            if (GUILayout.Button("Create Default Style + Library", GUILayout.Height(26)))
-                RingSceneBuilder.EnsureDefaultAssets(out style, out library);
-            return false;
-        }
-
-        void DrawLevel()
-        {
-            using (Section("Level"))
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    levelName = EditorGUILayout.TextField(levelName);
-                    if (GUILayout.Button("New", EditorStyles.miniButtonLeft, GUILayout.Width(44))) NewLevel();
-                    if (GUILayout.Button("Load", EditorStyles.miniButtonMid, GUILayout.Width(44))) LoadLevel();
-                    if (GUILayout.Button("Save", EditorStyles.miniButtonRight, GUILayout.Width(44))) SaveLevel();
-                }
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUIUtility.labelWidth = 34f;
-                    grid = EditorGUILayout.FloatField("Grid", grid, GUILayout.MinWidth(70));
-                    EditorGUIUtility.labelWidth = 40f;
-                    angleStep = EditorGUILayout.FloatField("Angle", angleStep, GUILayout.MinWidth(70));
-                    EditorGUIUtility.labelWidth = 0f;
-                    if (GUILayout.Button("Snap All", EditorStyles.miniButton, GUILayout.Width(70))) SnapAll();
-                }
-            }
-        }
-
-        void DrawMode()
-        {
-            using (Section("Scene Click"))
-            {
-                var newMode = (Mode)GUILayout.Toolbar((int)mode, new[] { "Select", "Link", "Arm", "Clamp", "Delete" }, GUILayout.Height(24));
-                if (newMode != mode)
-                {
-                    mode = newMode;
-                    linkFrom = null;
-                    SceneView.RepaintAll();
-                }
-                string help = mode switch
-                {
-                    Mode.Link => linkFrom == null
-                        ? "Click the <b>parent</b> piece (the one that holds)."
-                        : $"Parent: <b>{linkFrom.name}</b>. Now click the <b>child</b>. Esc cancels.",
-                    Mode.Arm => "Click on a ring or pipe: adds an arm pointing toward the click.",
-                    Mode.Clamp => "Click on a pipe: adds a metal clamp there.",
-                    Mode.Delete => "Click a clamp, sleeve (removes the link), arm, or piece.",
-                    _ => "Normal selection. Move/rotate with Unity's tools; Save snaps to the grid.",
-                };
-                EditorGUILayout.LabelField(help, helpText);
-            }
-        }
-
-        void DrawShapes()
-        {
-            using (Section("Shapes  ·  click to place at the Scene view center"))
-            {
-                DrawTiles(PieceKind.Ring, "Rings");
-                EditorGUILayout.Space(4f);
-                DrawTiles(PieceKind.Pipe, "Pipes");
-            }
-        }
-
         void DrawTiles(PieceKind kind, string title)
         {
             EditorGUILayout.LabelField(title, EditorStyles.miniBoldLabel);
-            int perRow = Mathf.Max(1, Mathf.FloorToInt((position.width - 30f) / (TileW + 4f)));
+            int perRow = Mathf.Max(1, Mathf.FloorToInt((position.width - 40f) / (TileW + 4f)));
             var presets = library.presets.FindAll(p => p.kind == kind);
             for (int i = 0; i < presets.Count; i += perRow)
             {
@@ -230,132 +375,6 @@ namespace RotateRings.EditorTools
                 pts[i] = new Vector3(r.center.x + (IconPoints[i].x - c.x) * s, r.center.y - (IconPoints[i].y - c.y) * s, 0f);
             Handles.color = color;
             Handles.DrawAAPolyLine(Mathf.Max(2.5f, style.thickness * s), pts);
-        }
-
-        void DrawColors()
-        {
-            using (Section("Color"))
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    for (int i = 0; i < style.palette.Count; i++)
-                    {
-                        Rect r = GUILayoutUtility.GetRect(24f, 24f, GUILayout.Width(24f), GUILayout.Height(24f));
-                        if (i == colorIndex) EditorGUI.DrawRect(r, Color.white);
-                        EditorGUI.DrawRect(new Rect(r.x + 3f, r.y + 3f, r.width - 6f, r.height - 6f), style.palette[i]);
-                        if (GUI.Button(r, GUIContent.none, GUIStyle.none)) colorIndex = i;
-                    }
-                    GUILayout.FlexibleSpace();
-                }
-                GUI.enabled = SelectedPieces().Count > 0;
-                if (GUILayout.Button("Apply To Selection", EditorStyles.miniButton)) ApplyColorToSelection();
-                GUI.enabled = true;
-            }
-        }
-
-        void DrawSelection()
-        {
-            var selected = SelectedPieces();
-            using (Section(selected.Count == 1 ? $"Selected  ·  {selected[0].name}" : $"Selected  ·  {selected.Count} pieces"))
-            {
-                if (selected.Count == 0)
-                {
-                    EditorGUILayout.LabelField("Select a piece to rotate it or add arm layouts.", helpText);
-                    return;
-                }
-
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    if (GUILayout.Button($"Rotate left {angleStep}°", EditorStyles.miniButtonLeft)) RotateSelection(angleStep);
-                    if (GUILayout.Button($"Rotate right {angleStep}°", EditorStyles.miniButtonRight)) RotateSelection(-angleStep);
-                }
-                if (selected.Count != 1) return;
-
-                var piece = selected[0];
-                EditorGUILayout.Space(4f);
-                EditorGUILayout.LabelField("Arms  ·  replaces the current arms", EditorStyles.miniBoldLabel);
-                var layouts = ArmLayouts.For(piece);
-                const int perRow = 2;
-                for (int i = 0; i < layouts.Count; i += perRow)
-                {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        for (int j = i; j < Mathf.Min(i + perRow, layouts.Count); j++)
-                            if (GUILayout.Button(layouts[j].label, GUILayout.Height(22))) ApplyArmLayout(piece, layouts[j]);
-                    }
-                }
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUIUtility.labelWidth = 80f;
-                    EditorGUI.BeginChangeCheck();
-                    float len = EditorGUILayout.FloatField("Arm length", style.armLength);
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        Undo.RecordObject(style, "Arm length");
-                        style.armLength = len;
-                        EditorUtility.SetDirty(style);
-                    }
-                    EditorGUIUtility.labelWidth = 0f;
-                    if (GUILayout.Button("Clear Arms", EditorStyles.miniButton, GUILayout.Width(80))) ClearArms(piece);
-                }
-            }
-        }
-
-        void DrawSolver()
-        {
-            using (Section("Solvability"))
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUIUtility.labelWidth = 58f;
-                    rerollAttempts = Mathf.Max(1, EditorGUILayout.IntField("Attempts", rerollAttempts, GUILayout.MinWidth(90)));
-                    EditorGUIUtility.labelWidth = 52f;
-                    solveSeconds = Mathf.Max(0.1f, EditorGUILayout.FloatField("Max sec", solveSeconds, GUILayout.MinWidth(80)));
-                    EditorGUIUtility.labelWidth = 0f;
-                }
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    if (GUILayout.Button("Check Solvable", GUILayout.Height(24))) CheckSolvable();
-                    string label = SelectedPieces().Count > 0 ? "Regenerate (selected rings)" : "Regenerate (all rings)";
-                    if (GUILayout.Button(label, GUILayout.Height(24))) RegenerateSolvable();
-                }
-                EditorGUILayout.LabelField(
-                    "Regenerate keeps positions, links, arms and clamps; it only re-rolls ring rotations " +
-                    $"(snapped to {angleStep}°) until the level is solvable, keeping the hardest of the attempts. " +
-                    "Select rings first to re-roll only those. Max sec = search time per attempt.", helpText);
-
-                if (solveResult == null) return;
-                EditorGUILayout.HelpBox(solveResult.Summary, solveResult.solved ? MessageType.Info : MessageType.Warning);
-                if (!solveResult.solved || solveResult.moves.Count == 0) return;
-                showSolution = EditorGUILayout.Foldout(showSolution, $"Solution ({solveResult.moves.Count} moves) · click to select the piece", true);
-                if (!showSolution) return;
-                for (int i = 0; i < solveResult.moves.Count; i++)
-                {
-                    var move = solveResult.moves[i];
-                    if (GUILayout.Button($"{i + 1}. {move}", moveButton) && move.piece != null)
-                    {
-                        Selection.activeGameObject = move.piece.gameObject;
-                        EditorGUIUtility.PingObject(move.piece.gameObject);
-                    }
-                }
-            }
-        }
-
-        void DrawFooter()
-        {
-            var counts = $"Pieces {root.GetComponentsInChildren<Piece>(true).Length}   ·   " +
-                         $"Links {root.GetComponentsInChildren<PieceLink>(true).Length}   ·   " +
-                         $"Arms {root.GetComponentsInChildren<PieceArm>(true).Length}   ·   " +
-                         $"Clamps {root.GetComponentsInChildren<PipeClamp>(true).Length}";
-            EditorGUILayout.LabelField(counts, EditorStyles.centeredGreyMiniLabel);
-        }
-
-        static EditorGUILayout.VerticalScope Section(string title)
-        {
-            EditorGUILayout.Space(6f);
-            var scope = new EditorGUILayout.VerticalScope(EditorStyles.helpBox);
-            EditorGUILayout.LabelField(title, sectionTitle);
-            return scope;
         }
 
         // ---------- Scene view ----------
@@ -529,6 +548,7 @@ namespace RotateRings.EditorTools
                 kind = preset.kind,
                 pos = new Vector2(Snap(center.x, grid), Snap(center.y, grid)),
                 color = colorIndex,
+                finish = finish,
                 radius = preset.radius,
                 gapAngle = preset.gapAngle,
                 gapCenter = 90f,
@@ -566,6 +586,23 @@ namespace RotateRings.EditorTools
             {
                 Undo.RecordObject(p, "Color");
                 p.color = style.GetColor(colorIndex);
+                p.Rebuild();
+            }
+            MarkDirty();
+        }
+
+        void ApplyFinishToSelection()
+        {
+            foreach (var p in SelectedPieces())
+            {
+                Undo.RecordObject(p, "Finish");
+                foreach (var link in p.GetComponentsInChildren<PieceLink>(true))
+                {
+                    Undo.RecordObject(link, "Finish");
+                    if (link.stem != null) Undo.RecordObject(link.stem, "Finish");
+                    if (link.sleeve != null) Undo.RecordObject(link.sleeve, "Finish");
+                }
+                style.ApplyFinish(p, finish);
                 p.Rebuild();
             }
             MarkDirty();

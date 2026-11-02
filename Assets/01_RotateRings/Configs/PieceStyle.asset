@@ -15,10 +15,26 @@ MonoBehaviour:
   thickness: 0.34
   styleRow: 0
   pipeCornerRadius: 0.4
+  finishes:
+  - finish: 0
+    body: {fileID: 2100000, guid: 14f0be9d9adddd2468c07a3d296af074, type: 2}
+    linkSprite: {fileID: 21300000, guid: 133c9257c202d82428c60c587fdf3232, type: 3}
+    styleRow: 0
+  - finish: 1
+    body: {fileID: 2100000, guid: c0c8b97a69709014280f1ca9226fcf9c, type: 2}
+    linkSprite: {fileID: 21300000, guid: 7241f888fb89e7946b681aca6e9e0942, type: 3}
+    styleRow: 0
+  - finish: 2
+    body: {fileID: 2100000, guid: 841949697c6d9db4b8a2a3fc730b5b40, type: 2}
+    linkSprite: {fileID: 21300000, guid: 43c382c847cfde14db07acc679e0b440, type: 3}
+    styleRow: 0
   stemWidth: 0.3
   sleeveSize: {x: 0.6, y: 0.45}
   sleeveOffset: {x: 0, y: 0.03}
-  linkSprite: {fileID: 21300000, guid: 757a2b1b441618e47a819a611aab8a93, type: 3}
+  linkSprite: {fileID: 21300000, guid: 133c9257c202d82428c60c587fdf3232, type: 3}
+  sleeveSprite: {fileID: 21300000, guid: 4a2d37051396bfa4c8168710d5c441c2, type: 3}
+  sleeveMaterial: {fileID: 2100000, guid: a721861a94173bc4fb985e3febec3928, type: 2}
+  clipSize: {x: 0.414375, y: 0.5684375}
   armLength: 0.9
   clampSize: {x: 0.56, y: 0.72}
   clampSprite: {fileID: 21300000, guid: 7bdb85b956df88242b2dfaa6ed0e042d, type: 3}

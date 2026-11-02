@@ -28,6 +28,8 @@ namespace RotateRings
         [Tooltip("RingFinal.png row: 0 = flat face with rounded rim (default look), 1 = round tube.")]
         [Range(0, 1)] public int styleRow = 0;
         public Color color = Color.white;
+        [Tooltip("Set through PieceStyle.ApplyFinish (material + link sprites); stored here for saving.")]
+        public Finish finish;
 
         [Header("Rendering")]
         public Material bodyMaterial;

@@ -35,12 +35,14 @@ Material:
     m_Floats:
     - _AlphaClip: 0.02
     - _Ambient: 0.75
+    - _BodyTiling: 0
     - _Brightness: 1.2
     - _Diffuse: 0.35
     - _Gloss: 24
     - _MidGray: 0.5
     - _ShadeStrength: 0.6
     - _Specular: 0.08
+    - _TileThick: 6
     m_Colors:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _LightDir: {r: -0.4, g: 0.6, b: -1, a: 0}

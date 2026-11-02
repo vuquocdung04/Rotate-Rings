@@ -176,6 +176,16 @@ namespace RotateRings
             return best;
         }
 
+        /// <summary>Distance from p to the nearest straight segment (arcs ignored); MaxValue if there is none.</summary>
+        public float DistanceToLines(Vector2 p)
+        {
+            float best = float.MaxValue;
+            foreach (var seg in segments)
+                if (seg.type == SegmentType.Line)
+                    best = Mathf.Min(best, Vector2.Distance(p, seg.Closest(p, out _)));
+            return best;
+        }
+
         /// <summary>True if q is one of the path's two free ends (always false for closed paths).</summary>
         public bool IsEndPoint(Vector2 q, float tolerance = 1e-3f) =>
             !closed && segments.Count > 0 &&

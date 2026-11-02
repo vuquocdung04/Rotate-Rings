@@ -31,8 +31,12 @@ namespace RotateRings.EditorTools
         Piece linkFrom;
         Vector2 scroll;
         bool showAssets;
+        int rerollAttempts = 40;
+        float solveSeconds = 2f;
+        LevelSolver.Result solveResult;
+        bool showSolution;
 
-        static GUIStyle sectionTitle, tileLabel, helpText;
+        static GUIStyle sectionTitle, tileLabel, helpText, moveButton;
         static readonly List<Vector2> IconPoints = new();
 
         [MenuItem("Tools/Rotate Rings/Level Editor")]
@@ -62,6 +66,7 @@ namespace RotateRings.EditorTools
             sectionTitle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 12 };
             tileLabel = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Clip };
             helpText = new GUIStyle(EditorStyles.wordWrappedMiniLabel) { richText = true };
+            moveButton = new GUIStyle(EditorStyles.miniButton) { alignment = TextAnchor.MiddleLeft, wordWrap = true };
         }
 
         // ---------- Window ----------
@@ -94,6 +99,7 @@ namespace RotateRings.EditorTools
             DrawShapes();
             DrawColors();
             DrawSelection();
+            DrawSolver();
             DrawFooter();
 
             EditorGUILayout.EndScrollView();
@@ -291,6 +297,46 @@ namespace RotateRings.EditorTools
                     }
                     EditorGUIUtility.labelWidth = 0f;
                     if (GUILayout.Button("Clear Arms", EditorStyles.miniButton, GUILayout.Width(80))) ClearArms(piece);
+                }
+            }
+        }
+
+        void DrawSolver()
+        {
+            using (Section("Solvability"))
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUIUtility.labelWidth = 58f;
+                    rerollAttempts = Mathf.Max(1, EditorGUILayout.IntField("Attempts", rerollAttempts, GUILayout.MinWidth(90)));
+                    EditorGUIUtility.labelWidth = 52f;
+                    solveSeconds = Mathf.Max(0.1f, EditorGUILayout.FloatField("Max sec", solveSeconds, GUILayout.MinWidth(80)));
+                    EditorGUIUtility.labelWidth = 0f;
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (GUILayout.Button("Check Solvable", GUILayout.Height(24))) CheckSolvable();
+                    string label = SelectedPieces().Count > 0 ? "Regenerate (selected rings)" : "Regenerate (all rings)";
+                    if (GUILayout.Button(label, GUILayout.Height(24))) RegenerateSolvable();
+                }
+                EditorGUILayout.LabelField(
+                    "Regenerate keeps positions, links, arms and clamps; it only re-rolls ring rotations " +
+                    $"(snapped to {angleStep}°) until the level is solvable, keeping the hardest of the attempts. " +
+                    "Select rings first to re-roll only those. Max sec = search time per attempt.", helpText);
+
+                if (solveResult == null) return;
+                EditorGUILayout.HelpBox(solveResult.Summary, solveResult.solved ? MessageType.Info : MessageType.Warning);
+                if (!solveResult.solved || solveResult.moves.Count == 0) return;
+                showSolution = EditorGUILayout.Foldout(showSolution, $"Solution ({solveResult.moves.Count} moves) · click to select the piece", true);
+                if (!showSolution) return;
+                for (int i = 0; i < solveResult.moves.Count; i++)
+                {
+                    var move = solveResult.moves[i];
+                    if (GUILayout.Button($"{i + 1}. {move}", moveButton) && move.piece != null)
+                    {
+                        Selection.activeGameObject = move.piece.gameObject;
+                        EditorGUIUtility.PingObject(move.piece.gameObject);
+                    }
                 }
             }
         }
@@ -592,6 +638,145 @@ namespace RotateRings.EditorTools
             foreach (var c in root.GetComponentsInChildren<PipeClamp>(true)) Undo.RegisterCreatedObjectUndo(c.gameObject, "Load Level");
             levelName = Path.GetFileNameWithoutExtension(full);
             MarkDirty();
+        }
+
+        // ---------- Solvability ----------
+
+        void CheckSolvable()
+        {
+            LevelBuilder.AssignSortingOrders(root); // fresh link layout before the snapshot
+            solveResult = new LevelSolver(root).Solve(solveSeconds);
+            showSolution = false;
+            Debug.Log("[LevelEditor] " + solveResult.Summary);
+        }
+
+        /// <summary>Rings whose rotation matters (a gap or arms): the selected ones, or all of them.</summary>
+        List<Piece> RerollTargets()
+        {
+            var selected = SelectedPieces();
+            var source = selected.Count > 0 ? selected : new List<Piece>(root.GetComponentsInChildren<Piece>());
+            return source.FindAll(p => p.TryGetComponent<RingShape>(out var ring) &&
+                                       (ring.gapAngle > 0f || p.GetComponentInChildren<PieceArm>() != null));
+        }
+
+        /// <summary>
+        /// Re-rolls ring rotations (positions, links, arms, clamps untouched) and keeps the solvable attempt whose
+        /// search was the hardest. Attempts are rejected when a link would start in a ring's gap or a re-rolled ring
+        /// overlaps something. Restores the original rotations if nothing solvable turns up.
+        /// </summary>
+        void RegenerateSolvable()
+        {
+            var targets = RerollTargets();
+            if (targets.Count == 0)
+            {
+                solveResult = new LevelSolver.Result { note = "No ring with a gap or arms to re-roll." };
+                return;
+            }
+
+            var transforms = targets.ConvertAll(p => p.transform);
+            var original = transforms.ConvertAll(t => t.rotation);
+            Undo.RecordObjects(transforms.ToArray(), "Regenerate Solvable");
+
+            int slots = Mathf.Max(1, Mathf.RoundToInt(360f / Mathf.Max(1f, angleStep)));
+            float[] best = null;
+            LevelSolver.Result bestResult = null;
+            int found = 0, rejectGap = 0, rejectOverlap = 0, unsolvable = 0, unknown = 0, tried = 0;
+            var angles = new float[targets.Count];
+            try
+            {
+                for (int a = 0; a < rerollAttempts; a++)
+                {
+                    if (EditorUtility.DisplayCancelableProgressBar("Regenerate Solvable",
+                            $"Attempt {a + 1}/{rerollAttempts}  ·  solvable so far: {found}", (float)a / rerollAttempts))
+                        break;
+                    tried++;
+
+                    for (int i = 0; i < targets.Count; i++)
+                    {
+                        angles[i] = Random.Range(0, slots) * 360f / slots;
+                        transforms[i].rotation = Quaternion.Euler(0f, 0f, angles[i]);
+                    }
+                    foreach (var link in root.GetComponentsInChildren<PieceLink>()) link.Layout();
+
+                    if (!LinksClearOfGaps(targets))
+                    {
+                        rejectGap++;
+                        continue;
+                    }
+                    var solver = new LevelSolver(root);
+                    if (solver.OverlappingAtStart(targets).Count > 0)
+                    {
+                        rejectOverlap++;
+                        continue;
+                    }
+                    var result = solver.Solve(solveSeconds);
+                    if (!result.solved)
+                    {
+                        if (result.gaveUp) unknown++;
+                        else unsolvable++;
+                        continue;
+                    }
+                    found++;
+                    if (bestResult == null || result.states > bestResult.states ||
+                        (result.states == bestResult.states && result.moves.Count > bestResult.moves.Count))
+                    {
+                        bestResult = result;
+                        best = (float[])angles.Clone();
+                    }
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+
+            for (int i = 0; i < targets.Count; i++)
+                transforms[i].rotation = best != null ? Quaternion.Euler(0f, 0f, best[i]) : original[i];
+            LevelBuilder.AssignSortingOrders(root);
+            MarkDirty();
+
+            string stats = $"{tried} attempts on {targets.Count} rings: {found} solvable, {unsolvable} unsolvable, " +
+                           $"{unknown} search limit, {rejectGap} link in a gap, {rejectOverlap} overlapping.";
+            if (bestResult != null)
+            {
+                bestResult.note = "Regenerated. " + stats;
+                solveResult = bestResult;
+            }
+            else
+            {
+                solveResult = new LevelSolver(root).Solve(solveSeconds);
+                solveResult.note = "Nothing solvable found, rotations restored. " + stats +
+                                   (unsolvable == 0 && found == 0 && unknown > 0 ? " Try a larger Max sec." : " The layout itself may be blocked.");
+            }
+            showSolution = false;
+            Debug.Log("[LevelEditor] " + solveResult.Summary);
+        }
+
+        /// <summary>Every link touching a re-rolled ring must sit well inside that ring's arc, not in or at its gap.</summary>
+        bool LinksClearOfGaps(List<Piece> rings)
+        {
+            foreach (var link in root.GetComponentsInChildren<PieceLink>())
+            {
+                var parent = link.GetComponentInParent<Piece>();
+                if (parent == null || link.child == null) continue;
+                if (rings.Contains(link.child) && !WellInside(link.child, link.GripWorldPos, link.sleeveSize.x * 0.5f))
+                    return false;
+                if (rings.Contains(parent))
+                {
+                    link.GetCapsule(out Vector2 start, out Vector2 end, out _, out _);
+                    Vector2 anchor = start - (end - start).normalized * (parent.thickness * 0.5f);
+                    if (!WellInside(parent, anchor, link.stemWidth * 0.5f)) return false;
+                }
+            }
+            return true;
+        }
+
+        static bool WellInside(Piece p, Vector2 world, float margin)
+        {
+            if (p.shape.closed) return true;
+            float s = p.shape.ClosestAlong(p.transform.InverseTransformPoint(world), out _);
+            float m = margin + p.thickness * 0.5f;
+            return s >= m && s <= p.shape.Length - m;
         }
 
         // ---------- Helpers ----------

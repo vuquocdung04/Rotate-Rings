@@ -356,8 +356,8 @@ namespace RotateRings
         }
 
         /// <summary>
-        /// Sliding: every grip must stay on a straight part of the path, or have slid past a free end.
-        /// Running a bend into a grip is blocked. (Rotating rings always stay on their circle.)
+        /// Sliding: every grip, over its whole length (center and both edges), must stay on a straight part of the
+        /// path, or have slid past a free end. Running a bend into a grip is blocked. (Rings always stay on their circle.)
         /// </summary>
         bool GripsAllowPose(out Vector2 hit)
         {
@@ -366,13 +366,18 @@ namespace RotateRings
             foreach (var g in Grips)
             {
                 if (g == null) continue;
-                Vector2 local = transform.InverseTransformPoint(g.GripWorldPos);
-                Vector2 q = shape.ClosestPoint(local, out float d);
-                if (d <= BendTolerance || shape.IsEndPoint(q)) continue;
-                hit = g.GripWorldPos;
+                Vector2 c = g.GripWorldPos, h = SlideAxis * g.HalfLength;
+                if (OnStraight(c) && OnStraight(c + h) && OnStraight(c - h)) continue;
+                hit = c;
                 return false;
             }
             return true;
+        }
+
+        bool OnStraight(Vector2 world)
+        {
+            Vector2 local = transform.InverseTransformPoint(world);
+            return shape.DistanceToLines(local) <= BendTolerance || shape.IsEndPoint(shape.ClosestPoint(local, out _));
         }
 
         /// <summary>One click per ratchet step actually moved (blocked drags and wobbles stay silent).</summary>

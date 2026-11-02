@@ -18,7 +18,8 @@ namespace RotateRings
         public SpriteRenderer sprite;
 
         public override Vector2 GripWorldPos => transform.position;
-        public float CollisionRadius => Mathf.Max(size.x, size.y) * 0.5f;
+        public override float HalfLength => size.x * 0.5f;
+        public float CollisionRadius =>Mathf.Max(size.x, size.y) * 0.5f;
 
         void OnEnable()
         {
@@ -41,7 +42,9 @@ namespace RotateRings
         // The clamp goes away with the pipe it held.
         protected override void OnReleased()
         {
-            if (Application.isPlaying) Destroy(gameObject);
+            if (!Application.isPlaying) return;
+            if (child != null) RingBreakFX.SpawnClamp(this, child.breakMaterial);
+            Destroy(gameObject);
         }
 
         /// <summary>Snaps onto the pipe's centerline and turns to the segment direction (flanges across the pipe).</summary>

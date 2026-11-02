@@ -22,6 +22,7 @@ namespace RotateRings
 
         public Piece Parent { get; private set; }
         public override Vector2 GripWorldPos => transform.TransformPoint(gripLocal);
+        public override float HalfLength => sleeveSize.x * 0.5f;
 
         Vector2 anchorLocal; // stem root on the parent's centerline, parent local space
         Vector2 gripLocal;   // grip point on the child's centerline, this transform's local space

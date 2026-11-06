@@ -13,112 +13,15 @@ MonoBehaviour:
   m_Name: ShapeLibrary
   m_EditorClassIdentifier: Assembly-CSharp::RotateRings.ShapeLibrary
   presets:
-  - name: C 70
-    kind: 0
-    radius: 1.25
-    gapAngle: 70
-    points: []
-  - name: C 40
-    kind: 0
-    radius: 1.25
-    gapAngle: 40
-    points: []
-  - name: C 30
-    kind: 0
-    radius: 1.25
-    gapAngle: 30
-    points: []
-  - name: U 120
-    kind: 0
-    radius: 1.25
-    gapAngle: 120
-    points: []
-  - name: Closed
+  - name: Ring
     kind: 0
     radius: 1.25
     gapAngle: 0
     points: []
-  - name: Small C
-    kind: 0
-    radius: 0.8
-    gapAngle: 70
-    points: []
-  - name: Small Closed
-    kind: 0
-    radius: 0.8
-    gapAngle: 0
-    points: []
-  - name: Big C
-    kind: 0
-    radius: 2.4
-    gapAngle: 40
-    points: []
-  - name: Big Closed
-    kind: 0
-    radius: 2.4
-    gapAngle: 0
-    points: []
-  - name: I 2
-    kind: 1
-    radius: 1.25
-    gapAngle: 70
-    points:
-    - {x: 0, y: -1}
-    - {x: 0, y: 1}
-  - name: I 3
+  - name: Pipe
     kind: 1
     radius: 1.25
     gapAngle: 70
     points:
     - {x: 0, y: -1.5}
     - {x: 0, y: 1.5}
-  - name: I 4
-    kind: 1
-    radius: 1.25
-    gapAngle: 70
-    points:
-    - {x: 0, y: -2}
-    - {x: 0, y: 2}
-  - name: L 2x1
-    kind: 1
-    radius: 1.25
-    gapAngle: 70
-    points:
-    - {x: -0.75, y: 1}
-    - {x: -0.75, y: -0.5}
-    - {x: 0.75, y: -0.5}
-  - name: L 3x1.5
-    kind: 1
-    radius: 1.25
-    gapAngle: 70
-    points:
-    - {x: -1, y: 1.5}
-    - {x: -1, y: -0.75}
-    - {x: 1, y: -0.75}
-  - name: U pipe
-    kind: 1
-    radius: 1.25
-    gapAngle: 70
-    points:
-    - {x: -0.8, y: 0.8}
-    - {x: -0.8, y: -0.8}
-    - {x: 0.8, y: -0.8}
-    - {x: 0.8, y: 0.8}
-  - name: S pipe
-    kind: 1
-    radius: 1.25
-    gapAngle: 70
-    points:
-    - {x: -1.2, y: 1.2}
-    - {x: -1.2, y: 0}
-    - {x: 1.2, y: 0}
-    - {x: 1.2, y: -1.2}
-  - name: Hook
-    kind: 1
-    radius: 1.25
-    gapAngle: 70
-    points:
-    - {x: -0.6, y: 1.2}
-    - {x: -0.6, y: -0.8}
-    - {x: 0.6, y: -0.8}
-    - {x: 0.6, y: 0}

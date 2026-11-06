@@ -29,24 +29,9 @@ namespace RotateRings
         {
             presets = new List<ShapePreset>
             {
-                Ring("C 70", 1.25f, 70f),
-                Ring("C 40", 1.25f, 40f),
-                Ring("C 30", 1.25f, 30f),
-                Ring("U 120", 1.25f, 120f),
-                Ring("Closed", 1.25f, 0f),
-                Ring("Small C", 0.8f, 70f),
-                Ring("Small Closed", 0.8f, 0f),
-                Ring("Big C", 2.4f, 40f),
-                Ring("Big Closed", 2.4f, 0f),
-
-                Pipe("I 2", new(0f, -1f), new(0f, 1f)),
-                Pipe("I 3", new(0f, -1.5f), new(0f, 1.5f)),
-                Pipe("I 4", new(0f, -2f), new(0f, 2f)),
-                Pipe("L 2x1", new(-0.75f, 1f), new(-0.75f, -0.5f), new(0.75f, -0.5f)),
-                Pipe("L 3x1.5", new(-1f, 1.5f), new(-1f, -0.75f), new(1f, -0.75f)),
-                Pipe("U pipe", new(-0.8f, 0.8f), new(-0.8f, -0.8f), new(0.8f, -0.8f), new(0.8f, 0.8f)),
-                Pipe("S pipe", new(-1.2f, 1.2f), new(-1.2f, 0f), new(1.2f, 0f), new(1.2f, -1.2f)),
-                Pipe("Hook", new(-0.6f, 1.2f), new(-0.6f, -0.8f), new(0.6f, -0.8f), new(0.6f, 0f)),
+                // One of each: radius, gap and pipe corners are dragged on the canvas.
+                Ring("Ring", 1.25f, 0f),
+                Pipe("Pipe", new(0f, -1.5f), new(0f, 1.5f)),
             };
         }
 

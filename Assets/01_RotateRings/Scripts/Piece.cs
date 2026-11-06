@@ -143,9 +143,11 @@ namespace RotateRings
             if (Application.isPlaying && IsWobbling) UpdateWobble();
         }
 
-        void LateUpdate()
+        void LateUpdate() => SyncShadow();
+
+        /// <summary>Shadow offset stays in world space regardless of the piece's rotation.</summary>
+        public void SyncShadow()
         {
-            // Shadow offset stays in world space regardless of the piece's rotation.
             if (shadowTf != null)
                 shadowTf.position = transform.position + (Vector3)shadowOffset + new Vector3(0f, 0f, 0.01f);
         }
@@ -196,6 +198,7 @@ namespace RotateRings
             outlineRenderer.sortingOrder = sortingOrder - 1;
             outlineRenderer.enabled = selected;
             shadowRenderer.sortingOrder = -1000; // all shadows under all pieces
+            SyncShadow();
 
             // Collision probes: circles of radius thickness/2 along the centerline. The end probes
             // already reach the cap tips (half a thickness past the path ends).

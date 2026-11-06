@@ -5,35 +5,51 @@ using Sirenix.OdinInspector.Editor;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace RotateRings.EditorTools
 {
     /// <summary>
     /// Tools > Rotate Rings > Level Editor (Odin window).
     /// Left: level file, shape palette, color/finish, selection, solvability. Right: a canvas that renders the level
-    /// with its own hidden camera, where pieces are moved, box-selected, rotated and connected (links / arms / clamps).
-    /// The Scene view click modes still work too. Everything is built through LevelBuilder, exactly like at runtime.
+    /// with its own hidden camera, where pieces are moved, reshaped, rotated and connected (links / arms / clamps).
+    /// The level being edited is a draft living in a hidden preview scene, so nothing appears in the Hierarchy until
+    /// Apply to Scene rebuilds it under the scene's Level root. Everything is built through LevelBuilder, exactly like
+    /// at runtime. The draft is kept in Library/ across reloads, play mode and closing the window.
     /// </summary>
     public class LevelEditorWindow : OdinEditorWindow
     {
-        enum Mode { Select, Link, Arm, Clamp, Delete }
-        enum DragOp { None, Pan, Move, Band, Arm, Clamp }
+        enum DragOp { None, Pan, Move, Arm, Clamp, RingRadius, RingGap, RingRotate, PipePoint }
 
         const string LevelsDir = "Assets/01_RotateRings/Levels";
         const string RootName = "Level";
+        const string DraftRootName = "LevelDraft";
+        const string DraftPath = "Library/RotateRingsLevelDraft.json";
         const float TileW = 78f, TileH = 74f;
         const string Main = "Main";
         const string Tabs = Main + "/Tabs";
         const string DragKey = "RotateRings.ShapePreset";
         const float ToolbarH = 21f, StatusH = 20f, MinPanel = 260f, MinCanvas = 300f;
         const float MinZoom = 6f, MaxZoom = 400f;
+        const float MinRadius = 0.5f, MaxRadius = 8f, RadiusStep = 0.05f;
+        const float MaxGap = 180f; // RingShape.gapAngle range
+        const float MaxCornerRadius = 2f, MinPipeSegment = 0.05f;
+        const float HandlePickPixels = 9f;
+        const float RotateHandlePixels = 28f; // past the ring's outer edge
+        static readonly int CanvasControlHint = "RotateRingsLevelCanvas".GetHashCode();
+        const int MaxGenRings = 12, MaxGenPipes = 8;
+        const int GenLayouts = 6, GenAttempts = 12; // layouts tried, rotation rolls per layout
+        const float GenSolveSeconds = 0.5f;
 
-        static readonly string[] ModeNames = { "Select", "Link", "Arm", "Clamp", "Delete" };
         static readonly Color DefaultBackground = new(0.96f, 0.92f, 0.84f);
         static readonly Color SelectColor = new(0.15f, 0.85f, 1f, 0.4f);
         static readonly Color HoverColor = new(1f, 1f, 1f, 0.3f);
-        static readonly Color DeleteColor = new(1f, 0.25f, 0.2f, 0.4f);
         static readonly Color HandleColor = new(1f, 0.6f, 0.1f, 1f);
+        static readonly Color RadiusHandleColor = new(0.2f, 0.8f, 1f, 1f);
+        static readonly Color GapHandleColor = new(1f, 0.3f, 0.75f, 1f);
+        static readonly Color RotateHandleColor = new(0.3f, 0.9f, 0.4f, 1f);
+        static readonly Color PointHandleColor = new(1f, 0.85f, 0.2f, 1f);
+        static readonly Color AddPointColor = new(1f, 1f, 1f, 0.75f);
 
         [MenuItem("Tools/Rotate Rings/Level Editor")]
         static void Open()
@@ -42,30 +58,14 @@ namespace RotateRings.EditorTools
             w.minSize = new Vector2(MinPanel + MinCanvas, 420f);
         }
 
-        // ---------- No assets / no Level root yet ----------
+        // ---------- No assets yet / play mode ----------
 
         [Button("Create Assets (style, library, materials)", ButtonSizes.Large), GUIColor(0.4f, 0.9f, 0.5f)]
         [HideIf(nameof(AssetsReady)), PropertyOrder(1)]
         void CreateAssets() => RingAssetSetup.Rebuild(out style, out library);
 
-        [Button("Open Level Editor Scene", ButtonSizes.Large), GUIColor(0.4f, 0.8f, 1f), ShowIf(nameof(NeedsRoot)), PropertyOrder(2)]
-        [InfoBox("No 'Level' root in this scene.")]
-        void OpenEditorScene()
-        {
-            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            if (File.Exists(RingAssetSetup.EditorScenePath))
-            {
-                EditorSceneManager.OpenScene(RingAssetSetup.EditorScenePath);
-                root = FindRoot();
-                return;
-            }
-            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            root = CreateRoot();
-            EditorSceneManager.SaveScene(scene, RingAssetSetup.EditorScenePath);
-        }
-
-        [Button("Create Level Root here  (+ camera for play testing)"), ShowIf(nameof(NeedsRoot)), PropertyOrder(3)]
-        void CreateRootHere() => root = CreateRoot();
+        [ShowIf(nameof(Playing)), PropertyOrder(2), OnInspectorGUI]
+        void DrawPlayModeNote() => EditorGUILayout.HelpBox("Exit Play Mode to edit the level.", MessageType.Info);
 
         // ---------- Level file ----------
 
@@ -73,14 +73,35 @@ namespace RotateRings.EditorTools
         [BoxGroup(Main + "/Level"), HorizontalGroup(Main + "/Level/File"), HideLabel, SerializeField]
         string levelName = "level_001";
 
-        [HorizontalGroup(Main + "/Level/File", Width = 46), Button("New")]
-        void BtnNew() => NewLevel();
-
         [HorizontalGroup(Main + "/Level/File", Width = 46), Button("Load")]
         void BtnLoad() => LoadLevel();
 
         [HorizontalGroup(Main + "/Level/File", Width = 46), Button("Save"), GUIColor(0.4f, 0.9f, 0.5f)]
         void BtnSave() => SaveLevel();
+
+        [HorizontalGroup(Main + "/Level/Scene"), Button("$" + nameof(ApplyLabel), ButtonSizes.Medium), GUIColor(0.4f, 0.8f, 1f)]
+        [PropertyTooltip("Replaces everything under the scene's Level root with this draft (Ctrl+Z restores it).")]
+        void BtnApply() => ApplyToScene();
+
+        [HorizontalGroup(Main + "/Level/Scene", Width = 84), Button("From Scene", ButtonSizes.Medium)]
+        [PropertyTooltip("Replaces the draft with what is under the scene's Level root.")]
+        void BtnFromScene() => PullFromScene();
+
+        [HorizontalGroup(Main + "/Level/Gen"), LabelText("Rings"), LabelWidth(38), MinValue(0), MaxValue(MaxGenRings), SerializeField]
+        int genRings = 5;
+
+        [HorizontalGroup(Main + "/Level/Gen"), LabelText("Pipes"), LabelWidth(38), MinValue(0), MaxValue(MaxGenPipes), SerializeField]
+        int genPipes = 1;
+
+        [HorizontalGroup(Main + "/Level/GenButtons"), Button("Generate Auto"), GUIColor(0.8f, 0.7f, 1f)]
+        [PropertyTooltip("Replaces the draft with a random solvable layout (Ctrl+Z brings the old draft back).")]
+        void BtnGenerate() => GenerateSample();
+
+        [HorizontalGroup(Main + "/Level/GenButtons", Width = 84), Button("Clear All")]
+        [PropertyTooltip("Removes every piece from the draft. The scene only changes on Apply.")]
+        void BtnClearAll() => ClearAll();
+
+        string ApplyLabel => unapplied ? "Apply to Scene  (changes pending)" : "Apply to Scene";
 
         // ---------- Tab: Build ----------
 
@@ -88,10 +109,8 @@ namespace RotateRings.EditorTools
         void DrawShapes()
         {
             InitStyles();
-            EditorGUILayout.LabelField("Click a tile: place at the canvas center  ·  drag it into the canvas: place there.", helpText);
-            DrawTiles(PieceKind.Ring, "Rings");
-            EditorGUILayout.Space(4f);
-            DrawTiles(PieceKind.Pipe, "Pipes");
+            EditorGUILayout.LabelField("Drag a tile into the canvas to place it.", helpText);
+            DrawTiles();
         }
 
         [TabGroup(Tabs, "Build"), Title("Color  ·  Finish"), EnumToggleButtons, HideLabel, SerializeField]
@@ -144,7 +163,7 @@ namespace RotateRings.EditorTools
         void BtnCheck() => CheckSolvable();
 
         [HorizontalGroup(Tabs + "/Solve/Run"), Button("$" + nameof(RegenerateLabel), ButtonSizes.Medium), GUIColor(0.4f, 0.8f, 1f)]
-        void BtnRegenerate() => RegenerateSolvable();
+        void BtnRegenerate() => RegenerateSolvable(rerollAttempts, solveSeconds);
 
         string RegenerateLabel => HasSelection ? "Regenerate (selected)" : "Regenerate (all rings)";
 
@@ -167,8 +186,7 @@ namespace RotateRings.EditorTools
                 var move = solveResult.moves[i];
                 if (GUILayout.Button($"{i + 1}. {move}", moveButton) && move.piece != null)
                 {
-                    Selection.activeGameObject = move.piece.gameObject;
-                    EditorGUIUtility.PingObject(move.piece.gameObject);
+                    SelectPieces(new List<Piece> { move.piece });
                 }
             }
         }
@@ -183,45 +201,39 @@ namespace RotateRings.EditorTools
             EditorGUILayout.LabelField(SelectionTitle, EditorStyles.boldLabel);
             if (selected.Count == 0)
             {
-                EditorGUILayout.LabelField("Click a piece in the canvas (Shift adds, drag on empty space box-selects).", helpText);
+                EditorGUILayout.LabelField("Click a piece in the canvas (Shift adds).", helpText);
                 return;
             }
 
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                if (GUILayout.Button($"⟲ {angleStep}°  (Q)", EditorStyles.miniButtonLeft)) RotateSelection(angleStep);
-                if (GUILayout.Button($"⟳ {angleStep}°  (E)", EditorStyles.miniButtonMid)) RotateSelection(-angleStep);
-                if (GUILayout.Button("Delete  (Del)", EditorStyles.miniButtonRight)) DeleteSelection();
-            }
             if (selected.Count != 1) return;
 
             var piece = selected[0];
+            if (piece.TryGetComponent<RingShape>(out var ring)) DrawRingFields(piece, ring);
+            else if (piece.TryGetComponent<PipeShape>(out var pipe)) DrawPipeFields(piece, pipe);
+        }
+
+        void DrawRingFields(Piece piece, RingShape ring)
+        {
             EditorGUILayout.Space(4f);
-            EditorGUILayout.LabelField("Arms  ·  replaces the current arms  ·  drag the orange tips to aim", EditorStyles.miniBoldLabel);
-            var layouts = ArmLayouts.For(piece);
-            const int perRow = 2;
-            for (int i = 0; i < layouts.Count; i += perRow)
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    for (int j = i; j < Mathf.Min(i + perRow, layouts.Count); j++)
-                        if (GUILayout.Button(layouts[j].label, GUILayout.Height(22))) ApplyArmLayout(piece, layouts[j]);
-                }
-            }
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUIUtility.labelWidth = 80f;
-                EditorGUI.BeginChangeCheck();
-                float len = EditorGUILayout.FloatField("Arm length", style.armLength);
-                if (EditorGUI.EndChangeCheck())
-                {
-                    Undo.RecordObject(style, "Arm length");
-                    style.armLength = len;
-                    EditorUtility.SetDirty(style);
-                }
-                EditorGUIUtility.labelWidth = 0f;
-                if (GUILayout.Button("Clear Arms", EditorStyles.miniButton, GUILayout.Width(80))) ClearArms(piece);
-            }
+            EditorGUI.BeginChangeCheck();
+            float radius = EditorGUILayout.Slider("Radius", ring.radius, MinRadius, MaxRadius);
+            float gap = EditorGUILayout.Slider("Gap", ring.gapAngle, 0f, MaxGap);
+            if (!EditorGUI.EndChangeCheck()) return;
+            Undo.RecordObjects(new Object[] { ring, piece }, "Ring Shape");
+            SetRing(ring, radius, gap);
+            MarkDirty();
+        }
+
+        void DrawPipeFields(Piece piece, PipeShape pipe)
+        {
+            EditorGUILayout.Space(4f);
+            EditorGUI.BeginChangeCheck();
+            float corner = EditorGUILayout.Slider("Corner", pipe.cornerRadius, piece.thickness, MaxCornerRadius);
+            if (!EditorGUI.EndChangeCheck()) return;
+            Undo.RecordObjects(new Object[] { pipe, piece }, "Pipe Shape");
+            pipe.cornerRadius = corner;
+            ApplyPipe(pipe);
+            MarkDirty();
         }
 
         string SelectionTitle
@@ -259,35 +271,31 @@ namespace RotateRings.EditorTools
 
         // ---------- Canvas settings (drawn in the canvas toolbar) ----------
 
-        [SerializeField, HideInInspector] Mode mode;
         [SerializeField, HideInInspector] float grid = 0.25f;
         [SerializeField, HideInInspector] float angleStep = 15f;
         [SerializeField, HideInInspector] bool showGrid = true;
         [SerializeField, HideInInspector] float panelWidth = 320f;
         [SerializeField, HideInInspector] Vector2 viewCenter;
         [SerializeField, HideInInspector] float zoom = 45f; // pixels per world unit
+        [SerializeField, HideInInspector] bool unapplied;
 
-        string ModeHelp => mode switch
+        string StatusHelp
         {
-            Mode.Link => linkFrom == null
-                ? "Link: click the PARENT piece (the one that holds)."
-                : $"Link: parent {linkFrom.name}, now click the CHILD. Esc cancels.",
-            Mode.Arm => "Arm: click a ring or pipe, the arm points toward the click.",
-            Mode.Clamp => "Clamp: click a pipe to add a metal clamp there.",
-            Mode.Delete => "Delete: click a clamp, sleeve (removes the link), arm, or piece.",
-            _ => "Drag: move (Ctrl: no snap) · Shift: add · Q/E rotate · arrows nudge · Del · F frame · wheel zoom · RMB/MMB pan",
-        };
-
-        void OnModeChanged()
-        {
-            linkFrom = null;
-            SceneView.RepaintAll();
-            Repaint();
+            get
+            {
+                if (linkFrom != null) return $"Link: parent {linkFrom.name}, now click the CHILD. Esc cancels.";
+                if (SelectedShape<RingShape>() != null) return "Ring: green dot rotates, blue dot resizes, pink dots open the gap (Ctrl: no snap)";
+                if (SelectedShape<PipeShape>() != null) return "Pipe: drag a yellow dot to bend, a small dot to add a corner · Shift+click a yellow dot removes it (Ctrl: no snap)";
+                return "Right-click a piece: arm / clamp / link / delete · Drag: move (Ctrl: no snap) · Shift: add · Q/E rotate · arrows nudge · Del · F frame · wheel zoom · RMB/MMB drag pan";
+            }
         }
 
         // ---------- State ----------
 
-        Transform root;
+        // NonSerialized: a domain reload must not carry these over, the draft is reopened from disk instead.
+        [System.NonSerialized] Scene draftScene;
+        [System.NonSerialized] Transform root; // draft root, in the preview scene
+        [System.NonSerialized] readonly List<Piece> selection = new();
         int colorIndex;
         Piece linkFrom;
         LevelSolver.Result solveResult;
@@ -298,14 +306,18 @@ namespace RotateRings.EditorTools
         Vector2 canvasSize = new(400f, 400f);
         Vector2 mouseCanvas;
         Piece hover;
-        ShapePreset dropPreset, pressedTile;
+        // NonSerialized: Unity would turn these nulls into empty presets on a reload, leaving a stuck drop ghost.
+        [System.NonSerialized] ShapePreset dropPreset, pressedTile;
         Vector2 tilePressPos;
 
-        DragOp drag;
+        [System.NonSerialized] DragOp drag;
         bool dragMoved, dragAdditive;
         Piece dragPiece;
         PieceArm dragArm;
         PipeClamp dragClamp;
+        RingShape dragRing;
+        PipeShape dragPipe;
+        int dragPoint;
         Vector2 dragStartMouse, dragStartWorld, movePivotStart;
         readonly List<Transform> moveTargets = new();
         readonly List<Vector3> moveStarts = new();
@@ -315,15 +327,15 @@ namespace RotateRings.EditorTools
         static readonly List<Vector2> IconPoints = new();
 
         bool AssetsReady => style != null && library != null;
-        bool NeedsRoot => AssetsReady && Root == null;
-        bool Ready => AssetsReady && Root != null;
+        static bool Playing => EditorApplication.isPlayingOrWillChangePlaymode;
+        bool Ready => AssetsReady && !Playing && Root != null;
         bool HasSelection => SelectedPieces().Count > 0;
 
         Transform Root
         {
             get
             {
-                if (root == null) root = FindRoot();
+                if (root == null) OpenDraft();
                 return root;
             }
         }
@@ -332,9 +344,9 @@ namespace RotateRings.EditorTools
         {
             base.OnEnable();
             wantsMouseMove = true;
-            SceneView.duringSceneGui += OnSceneGUI;
-            Selection.selectionChanged += Repaint;
             Undo.undoRedoPerformed += OnUndoRedo;
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
+            AssemblyReloadEvents.beforeAssemblyReload += CloseDraft;
             EditorApplication.hierarchyChanged += Repaint;
             ObjectChangeEvents.changesPublished += OnObjectChanges;
             if (style == null) style = AssetDatabase.LoadAssetAtPath<PieceStyle>(RingAssetSetup.StylePath);
@@ -344,11 +356,12 @@ namespace RotateRings.EditorTools
         protected override void OnDisable()
         {
             base.OnDisable();
-            SceneView.duringSceneGui -= OnSceneGUI;
-            Selection.selectionChanged -= Repaint;
             Undo.undoRedoPerformed -= OnUndoRedo;
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            AssemblyReloadEvents.beforeAssemblyReload -= CloseDraft;
             EditorApplication.hierarchyChanged -= Repaint;
             ObjectChangeEvents.changesPublished -= OnObjectChanges;
+            CloseDraft();
             if (canvasCam != null) DestroyImmediate(canvasCam.gameObject);
             if (canvasRT != null)
             {
@@ -359,7 +372,15 @@ namespace RotateRings.EditorTools
 
         void OnUndoRedo()
         {
-            EditorApplication.QueuePlayerLoopUpdate(); // links / clamps re-layout in their edit-mode Update
+            if (root != null) LevelBuilder.AssignSortingOrders(root); // meshes and links follow the restored values
+            EditorApplication.QueuePlayerLoopUpdate();
+            Repaint();
+        }
+
+        /// <summary>Draft pieces must not join Piece.All while the game runs, so the draft waits on disk meanwhile.</summary>
+        void OnPlayModeChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.ExitingEditMode) CloseDraft();
             Repaint();
         }
 
@@ -438,13 +459,6 @@ namespace RotateRings.EditorTools
             GUILayout.BeginArea(r, EditorStyles.toolbar);
             using (new EditorGUILayout.HorizontalScope())
             {
-                for (int i = 0; i < ModeNames.Length; i++)
-                {
-                    bool on = GUILayout.Toggle(mode == (Mode)i, new GUIContent(ModeNames[i], $"Key {i + 1}"),
-                        EditorStyles.toolbarButton, GUILayout.Width(50f));
-                    if (on && mode != (Mode)i) SetMode((Mode)i);
-                }
-                GUILayout.Space(10f);
                 GUILayout.Label("Grid", EditorStyles.miniLabel, GUILayout.Width(26f));
                 grid = Mathf.Max(0f, EditorGUILayout.FloatField(grid, EditorStyles.toolbarTextField, GUILayout.Width(38f)));
                 GUILayout.Label("Angle", EditorStyles.miniLabel, GUILayout.Width(34f));
@@ -462,14 +476,8 @@ namespace RotateRings.EditorTools
             EditorGUI.DrawRect(r, EditorGUIUtility.isProSkin ? new Color(0.16f, 0.16f, 0.16f) : new Color(0.8f, 0.8f, 0.8f));
             Vector2 w = CanvasToWorld(mouseCanvas);
             const float infoW = 150f;
-            GUI.Label(new Rect(r.x + 6f, r.y, r.width - infoW - 12f, r.height), ModeHelp, statusLabel);
+            GUI.Label(new Rect(r.x + 6f, r.y, r.width - infoW - 12f, r.height), StatusHelp, statusLabel);
             GUI.Label(new Rect(r.xMax - infoW - 6f, r.y, infoW, r.height), $"x {w.x:0.00}   y {w.y:0.00}   ·   {zoom:0} px/u", statusRight);
-        }
-
-        void SetMode(Mode m)
-        {
-            mode = m;
-            OnModeChanged();
         }
 
         // ---------- Canvas: drawing ----------
@@ -521,6 +529,7 @@ namespace RotateRings.EditorTools
             canvasCam.aspect = size.x / size.y;
             canvasCam.transform.SetPositionAndRotation(new Vector3(viewCenter.x, viewCenter.y, -10f), Quaternion.identity);
             canvasCam.targetTexture = canvasRT;
+            canvasCam.scene = draftScene;
 
             var prev = RenderTexture.active;
             canvasCam.Render();
@@ -551,36 +560,69 @@ namespace RotateRings.EditorTools
         {
             var selected = SelectedPieces();
             if (hover != null && drag == DragOp.None && !selected.Contains(hover))
-                DrawPieceHighlight(hover, mode == Mode.Delete ? DeleteColor : HoverColor);
+                DrawPieceHighlight(hover, HoverColor);
             foreach (var p in selected) DrawPieceHighlight(p, SelectColor);
 
-            if (mode == Mode.Select)
+            foreach (var clamp in root.GetComponentsInChildren<PipeClamp>())
+                DrawHandle(clamp.transform.position, new Color(0.6f, 0.75f, 0.9f, 1f));
+            foreach (var p in selected)
+            foreach (var arm in p.GetComponentsInChildren<PieceArm>())
             {
-                foreach (var clamp in root.GetComponentsInChildren<PipeClamp>())
-                    DrawHandle(clamp.transform.position, new Color(0.6f, 0.75f, 0.9f, 1f));
-                foreach (var p in selected)
-                foreach (var arm in p.GetComponentsInChildren<PieceArm>())
-                {
-                    arm.GetSegment(out _, out Vector2 tip, out _);
-                    DrawHandle(tip, HandleColor);
-                }
+                arm.GetSegment(out _, out Vector2 tip, out _);
+                DrawHandle(tip, HandleColor);
             }
 
-            if (mode == Mode.Link && linkFrom != null)
+            var ring = SelectedShape<RingShape>();
+            if (ring != null)
+            {
+                DrawHandle(RadiusHandle(ring), RadiusHandleColor);
+                DrawHandle(GapHandle(ring, 1f), GapHandleColor);
+                DrawHandle(GapHandle(ring, -1f), GapHandleColor);
+
+                Handles.color = RotateHandleColor;
+                Handles.DrawAAPolyLine(2f, WorldToCanvas(RingPoint(ring, ring.gapCenter)), WorldToCanvas(RotateHandle(ring)));
+                DrawHandle(RotateHandle(ring), RotateHandleColor);
+            }
+
+            var pipe = SelectedShape<PipeShape>();
+            if (pipe != null)
+            {
+                for (int i = 0; i + 1 < pipe.points.Count; i++) DrawHandle(PipeMidpoint(pipe, i), AddPointColor, 3.5f);
+                for (int i = 0; i < pipe.points.Count; i++) DrawHandle(pipe.transform.TransformPoint(pipe.points[i]), PointHandleColor);
+            }
+
+            if (linkFrom != null)
             {
                 DrawPieceHighlight(linkFrom, SelectColor);
                 Handles.color = Color.cyan;
                 Handles.DrawAAPolyLine(3f, WorldToCanvas(linkFrom.transform.position), mouseCanvas);
             }
 
-            if (drag == DragOp.Band)
-            {
-                var band = BandRect();
-                Handles.DrawSolidRectangleWithOutline(band, new Color(0.3f, 0.7f, 1f, 0.12f), new Color(0.3f, 0.7f, 1f, 0.9f));
-            }
-
             if (dropPreset != null) DrawPreset(dropPreset, SnapPos(CanvasToWorld(mouseCanvas)));
         }
+
+        // Handles sit on the ring: the two gap edges, and the radius dot opposite the gap.
+        static Vector2 RingPoint(RingShape ring, float localDeg)
+        {
+            float a = localDeg * Mathf.Deg2Rad;
+            return ring.transform.TransformPoint(new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * ring.radius);
+        }
+
+        static Vector2 RadiusHandle(RingShape ring) => RingPoint(ring, ring.gapCenter + 180f);
+
+        /// <summary>Rotate dot: out past the gap, a fixed distance on screen so it stays grabbable at any zoom.</summary>
+        Vector2 RotateHandle(RingShape ring)
+        {
+            Vector2 center = ring.transform.position;
+            Vector2 edge = RingPoint(ring, ring.gapCenter);
+            return edge + (edge - center).normalized * (ring.GetComponent<Piece>().thickness * 0.5f + RotateHandlePixels / zoom);
+        }
+
+        static Vector2 GapHandle(RingShape ring, float side) => RingPoint(ring, ring.gapCenter + side * ring.gapAngle * 0.5f);
+
+        /// <summary>World position of the add-a-corner dot on leg i of a pipe.</summary>
+        static Vector2 PipeMidpoint(PipeShape pipe, int i) =>
+            pipe.transform.TransformPoint((pipe.points[i] + pipe.points[i + 1]) * 0.5f);
 
         void DrawPieceHighlight(Piece p, Color c)
         {
@@ -594,13 +636,13 @@ namespace RotateRings.EditorTools
             Handles.DrawAAPolyLine(p.thickness * zoom + 6f, pts);
         }
 
-        void DrawHandle(Vector2 world, Color c)
+        void DrawHandle(Vector2 world, Color c, float radius = 5f)
         {
             Vector2 g = WorldToCanvas(world);
             Handles.color = c;
-            Handles.DrawSolidDisc(g, Vector3.forward, 5f);
+            Handles.DrawSolidDisc(g, Vector3.forward, radius);
             Handles.color = new Color(0f, 0f, 0f, 0.6f);
-            Handles.DrawWireDisc(g, Vector3.forward, 5f);
+            Handles.DrawWireDisc(g, Vector3.forward, radius);
         }
 
         /// <summary>Ghost of a preset where it would be dropped, at the canvas scale.</summary>
@@ -620,18 +662,13 @@ namespace RotateRings.EditorTools
             ? PathShape.Ring(preset.radius, 90f, preset.gapAngle, style.thickness)
             : PathShape.Polyline(preset.points, style.pipeCornerRadius);
 
-        Rect BandRect()
-        {
-            Vector2 a = dragStartMouse, b = mouseCanvas;
-            return Rect.MinMaxRect(Mathf.Min(a.x, b.x), Mathf.Min(a.y, b.y), Mathf.Max(a.x, b.x), Mathf.Max(a.y, b.y));
-        }
-
         // ---------- Canvas: input ----------
 
         void HandleCanvasInput(Rect r)
         {
             var e = Event.current;
-            int id = GUIUtility.GetControlID(FocusType.Passive);
+            // Hinted so the id stays the same when the panel gains controls mid-drag (selecting a piece adds sliders).
+            int id = GUIUtility.GetControlID(CanvasControlHint, FocusType.Passive);
             bool inside = r.Contains(e.mousePosition);
             if (inside || drag != DragOp.None) mouseCanvas = e.mousePosition;
             Vector2 world = CanvasToWorld(e.mousePosition);
@@ -657,8 +694,7 @@ namespace RotateRings.EditorTools
                     dragStartWorld = world;
                     dragMoved = false;
                     if (e.button == 1 || e.button == 2 || (e.button == 0 && e.alt)) drag = DragOp.Pan;
-                    else if (e.button == 0 && mode == Mode.Select) BeginSelectDrag(world, e.shift);
-                    else if (e.button == 0) ClickMode(world);
+                    else if (e.button == 0) BeginSelectDrag(world, e.shift);
                     if (drag != DragOp.None) GUIUtility.hotControl = id;
                     e.Use();
                     Repaint();
@@ -674,8 +710,10 @@ namespace RotateRings.EditorTools
 
                 case EventType.MouseUp:
                     if (GUIUtility.hotControl != id) break;
+                    bool rightClick = drag == DragOp.Pan && e.button == 1 && !dragMoved;
                     EndDrag();
                     GUIUtility.hotControl = 0;
+                    if (rightClick) ShowContextMenu(world);
                     e.Use();
                     Repaint();
                     break;
@@ -710,22 +748,81 @@ namespace RotateRings.EditorTools
             }
         }
 
-        void ClickMode(Vector2 world)
+        /// <summary>Right-click: what can be added at this spot, without switching modes.</summary>
+        void ShowContextMenu(Vector2 world)
         {
-            switch (mode)
+            var piece = PickPiece(world);
+            var attachment = HitAttachment(world);
+            if (piece == null && attachment == null) return;
+
+            var menu = new GenericMenu();
+            if (piece != null)
             {
-                case Mode.Link: ClickLink(world); break;
-                case Mode.Arm: ClickArm(world); break;
-                case Mode.Clamp: ClickClamp(world); break;
-                case Mode.Delete: ClickDelete(world); break;
+                menu.AddItem(new GUIContent("Add Arm Here"), false, () => ClickArm(world));
+                if (!piece.shape.TryGetRingCircle(out _, out _))
+                    menu.AddItem(new GUIContent("Add Clamp Here"), false, () => ClickClamp(world));
+                menu.AddItem(new GUIContent("Link To..."), false, () => linkFrom = piece);
+                menu.AddSeparator("");
+
+                menu.AddItem(new GUIContent($"Rotate Left {angleStep}°"), false, () => RotatePiece(piece, angleStep));
+                menu.AddItem(new GUIContent($"Rotate Right {angleStep}°"), false, () => RotatePiece(piece, -angleStep));
+                menu.AddSeparator("");
+
+                foreach (var layout in ArmLayouts.For(piece)) // '/' would open a submenu
+                    menu.AddItem(new GUIContent("Arm Layout/" + layout.label.Replace("/", "-")), false, () => ApplyArmLayout(piece, layout));
+                if (piece.GetComponentInChildren<PieceArm>() != null)
+                    menu.AddItem(new GUIContent("Clear Arms"), false, () => ClearArms(piece));
+                menu.AddSeparator("");
             }
+            string target = attachment switch
+            {
+                PipeClamp => "Clamp",
+                PieceLink => "Link",
+                PieceArm => "Arm",
+                _ => "Piece",
+            };
+            menu.AddItem(new GUIContent("Delete " + target), false, () => ClickDelete(world));
+            menu.ShowAsContext();
         }
 
-        /// <summary>Arm tips of selected pieces, then clamps, then pieces; empty space starts a box selection.</summary>
+        /// <summary>Shape handles of the selected piece, arm tips, clamps, then pieces; empty space deselects.</summary>
         void BeginSelectDrag(Vector2 world, bool additive)
         {
+            if (linkFrom != null) // Link To... from the right-click menu is waiting for its child
+            {
+                ClickLink(world);
+                return;
+            }
+
             dragAdditive = additive;
             var selected = SelectedPieces();
+
+            var pipe = SelectedShape<PipeShape>();
+            if (pipe != null && BeginPipeDrag(pipe, world, additive)) return;
+
+            var ring = SelectedShape<RingShape>();
+            if (ring != null)
+            {
+                float pick = HandlePickPixels / zoom;
+                if (Vector2.Distance(world, RotateHandle(ring)) <= pick)
+                {
+                    Undo.RecordObject(ring.transform, "Rotate");
+                    dragRing = ring;
+                    drag = DragOp.RingRotate;
+                    return;
+                }
+
+                bool onRadius = Vector2.Distance(world, RadiusHandle(ring)) <= pick;
+                bool onGap = Vector2.Distance(world, GapHandle(ring, 1f)) <= pick ||
+                             Vector2.Distance(world, GapHandle(ring, -1f)) <= pick;
+                if (onRadius || onGap)
+                {
+                    Undo.RecordObjects(new Object[] { ring, ring.GetComponent<Piece>() }, "Ring Shape");
+                    dragRing = ring;
+                    drag = onRadius ? DragOp.RingRadius : DragOp.RingGap;
+                    return;
+                }
+            }
 
             float tipRadius = 8f / zoom;
             foreach (var p in selected)
@@ -751,8 +848,7 @@ namespace RotateRings.EditorTools
             var piece = PickPiece(world);
             if (piece == null)
             {
-                if (!additive) Selection.objects = new Object[0];
-                drag = DragOp.Band;
+                if (!additive) selection.Clear();
                 return;
             }
 
@@ -774,6 +870,47 @@ namespace RotateRings.EditorTools
             dragPiece = piece;
             BeginMove(selected, piece);
         }
+
+        /// <summary>Corner dots drag (or, with remove, delete the corner); leg dots insert a corner and drag it.</summary>
+        bool BeginPipeDrag(PipeShape pipe, Vector2 world, bool remove)
+        {
+            float pick = HandlePickPixels / zoom;
+            for (int i = 0; i < pipe.points.Count; i++)
+            {
+                if (Vector2.Distance(world, pipe.transform.TransformPoint(pipe.points[i])) > pick) continue;
+                RecordPipe(pipe);
+                if (remove)
+                {
+                    if (pipe.points.Count > 2)
+                    {
+                        pipe.points.RemoveAt(i);
+                        ApplyPipe(pipe);
+                        MarkDirty();
+                    }
+                    return true;
+                }
+                dragPipe = pipe;
+                dragPoint = i;
+                drag = DragOp.PipePoint;
+                return true;
+            }
+
+            for (int i = 0; i + 1 < pipe.points.Count; i++)
+            {
+                if (Vector2.Distance(world, PipeMidpoint(pipe, i)) > pick) continue;
+                RecordPipe(pipe);
+                pipe.points.Insert(i + 1, (pipe.points[i] + pipe.points[i + 1]) * 0.5f);
+                ApplyPipe(pipe);
+                dragPipe = pipe;
+                dragPoint = i + 1;
+                drag = DragOp.PipePoint;
+                return true;
+            }
+            return false;
+        }
+
+        static void RecordPipe(PipeShape pipe) =>
+            Undo.RecordObjects(new Object[] { pipe, pipe.GetComponent<Piece>() }, "Pipe Shape");
 
         void BeginMove(List<Piece> pieces, Piece pivot)
         {
@@ -817,7 +954,6 @@ namespace RotateRings.EditorTools
                     var owner = dragArm.GetComponentInParent<Piece>();
                     AimArm(owner, world, free ? 0f : angleStep, out dragArm.angle, out dragArm.pathT, out dragArm.side);
                     dragArm.Layout();
-                    EditorApplication.QueuePlayerLoopUpdate();
                     break;
 
                 case DragOp.Clamp:
@@ -825,6 +961,36 @@ namespace RotateRings.EditorTools
                     var pos = dragClamp.transform.position;
                     dragClamp.transform.position = new Vector3(world.x, world.y, pos.z);
                     dragClamp.Layout(); // snaps back onto its pipe
+                    break;
+
+                case DragOp.RingRadius:
+                    if (dragRing == null) break;
+                    float radius = Vector2.Distance(world, dragRing.transform.position);
+                    SetRing(dragRing, free ? radius : Snap(radius, RadiusStep), dragRing.gapAngle);
+                    break;
+
+                case DragOp.RingGap:
+                    if (dragRing == null) break;
+                    Vector2 local = dragRing.transform.InverseTransformPoint(world);
+                    float deg = Mathf.Atan2(local.y, local.x) * Mathf.Rad2Deg;
+                    float gap = Mathf.Abs(Mathf.DeltaAngle(dragRing.gapCenter, deg)) * 2f;
+                    SetRing(dragRing, dragRing.radius, free ? gap : Snap(gap, angleStep));
+                    break;
+
+                case DragOp.RingRotate:
+                    if (dragRing == null) break;
+                    Vector2 toMouse = world - (Vector2)dragRing.transform.position;
+                    float facing = Mathf.Atan2(toMouse.y, toMouse.x) * Mathf.Rad2Deg - dragRing.gapCenter;
+                    dragRing.transform.rotation = Quaternion.Euler(0f, 0f, Snap(facing, free ? 0f : angleStep));
+                    RelayoutAll();
+                    break;
+
+                case DragOp.PipePoint:
+                    if (dragPipe == null) break;
+                    Vector2 point = dragPipe.transform.InverseTransformPoint(free ? world : SnapPos(world));
+                    if (TouchesNeighbour(dragPipe, dragPoint, point)) break;
+                    dragPipe.points[dragPoint] = point;
+                    ApplyPipe(dragPipe);
                     break;
             }
         }
@@ -839,20 +1005,19 @@ namespace RotateRings.EditorTools
                     break;
                 case DragOp.Arm:
                 case DragOp.Clamp:
+                case DragOp.RingRadius:
+                case DragOp.RingGap:
+                case DragOp.RingRotate:
+                case DragOp.PipePoint:
                     MarkDirty();
-                    break;
-                case DragOp.Band:
-                    var band = BandRect();
-                    var picked = dragAdditive ? SelectedPieces() : new List<Piece>();
-                    foreach (var p in root.GetComponentsInChildren<Piece>())
-                        if (band.Contains(WorldToCanvas(p.transform.position)) && !picked.Contains(p)) picked.Add(p);
-                    SelectPieces(picked);
                     break;
             }
             drag = DragOp.None;
             dragPiece = null;
             dragArm = null;
             dragClamp = null;
+            dragRing = null;
+            dragPipe = null;
         }
 
         bool HandleKey(KeyCode key)
@@ -870,14 +1035,10 @@ namespace RotateRings.EditorTools
                 case KeyCode.UpArrow: MoveSelection(new Vector2(0f, step)); return true;
                 case KeyCode.DownArrow: MoveSelection(new Vector2(0f, -step)); return true;
                 case KeyCode.Escape:
-                    if (linkFrom != null) linkFrom = null;
-                    else SetMode(Mode.Select);
+                    linkFrom = null;
                     return true;
             }
-            int index = key - KeyCode.Alpha1;
-            if (index < 0 || index >= ModeNames.Length) return false;
-            SetMode((Mode)index);
-            return true;
+            return false;
         }
 
         void ZoomAt(Vector2 canvasPos, float factor)
@@ -916,34 +1077,39 @@ namespace RotateRings.EditorTools
         {
             foreach (var link in root.GetComponentsInChildren<PieceLink>()) link.Layout();
             foreach (var clamp in root.GetComponentsInChildren<PipeClamp>()) clamp.Layout();
-            EditorApplication.QueuePlayerLoopUpdate(); // shadows follow in LateUpdate
+            // The preview scene gets no LateUpdate, so shadows are moved here.
+            foreach (var piece in root.GetComponentsInChildren<Piece>()) piece.SyncShadow();
+            foreach (var arm in root.GetComponentsInChildren<PieceArm>()) arm.SyncShadow();
         }
 
-        static void SelectPieces(List<Piece> pieces) =>
-            Selection.objects = pieces.ConvertAll(p => (Object)p.gameObject).ToArray();
+        void SelectPieces(List<Piece> pieces)
+        {
+            selection.Clear();
+            selection.AddRange(pieces);
+            Repaint();
+        }
 
         // ---------- Palette tiles ----------
 
         float PanelWidth => Ready ? panelWidth : position.width;
 
-        void DrawTiles(PieceKind kind, string title)
+        void DrawTiles()
         {
-            EditorGUILayout.LabelField(title, EditorStyles.miniBoldLabel);
             int perRow = Mathf.Max(1, Mathf.FloorToInt((PanelWidth - 40f) / (TileW + 4f)));
-            var presets = library.presets.FindAll(p => p.kind == kind);
+            var presets = library.presets;
             for (int i = 0; i < presets.Count; i += perRow)
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     for (int j = i; j < Mathf.Min(i + perRow, presets.Count); j++)
-                        if (ShapeTile(presets[j])) Place(presets[j], SnapPos(viewCenter));
+                        ShapeTile(presets[j]);
                     GUILayout.FlexibleSpace();
                 }
             }
         }
 
-        /// <summary>Click places at the canvas center; dragging out of the tile starts a drag-and-drop into the canvas.</summary>
-        bool ShapeTile(ShapePreset preset)
+        /// <summary>Dragging out of the tile starts a drag-and-drop into the canvas; a plain click does nothing.</summary>
+        void ShapeTile(ShapePreset preset)
         {
             Rect r = GUILayoutUtility.GetRect(TileW, TileH, GUILayout.Width(TileW), GUILayout.Height(TileH));
             var e = Event.current;
@@ -962,12 +1128,15 @@ namespace RotateRings.EditorTools
                 DragAndDrop.StartDrag(preset.name);
                 e.Use();
             }
+            else if (e.rawType == EventType.MouseUp && pressedTile == preset)
+            {
+                pressedTile = null;
+            }
 
-            bool clicked = GUI.Button(r, GUIContent.none);
+            GUI.Button(r, GUIContent.none);
             if (Event.current.type == EventType.Repaint)
                 DrawShapeIcon(new Rect(r.x + 6f, r.y + 4f, r.width - 12f, r.height - 22f), preset, style.GetColor(colorIndex));
             GUI.Label(new Rect(r.x + 2f, r.yMax - 17f, r.width - 4f, 15f), preset.name, tileLabel);
-            return clicked;
         }
 
         /// <summary>All presets share one scale (5.4 world units across a tile) so sizes compare at a glance.</summary>
@@ -994,46 +1163,7 @@ namespace RotateRings.EditorTools
             Handles.DrawAAPolyLine(Mathf.Max(2.5f, style.thickness * s), pts);
         }
 
-        // ---------- Scene view ----------
-
-        void OnSceneGUI(SceneView view)
-        {
-            if (mode == Mode.Select || root == null || style == null) return;
-            var e = Event.current;
-
-            // Take over left clicks while a mode is active.
-            int id = GUIUtility.GetControlID(FocusType.Passive);
-            if (e.type == EventType.Layout) HandleUtility.AddDefaultControl(id);
-
-            Vector2 world = MouseWorld(e.mousePosition);
-            if (mode == Mode.Link && linkFrom != null)
-            {
-                Handles.color = Color.cyan;
-                Handles.DrawLine(linkFrom.transform.position, world, 3f);
-                view.Repaint();
-            }
-
-            if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape)
-            {
-                linkFrom = null;
-                e.Use();
-                Repaint();
-                return;
-            }
-            if (e.type != EventType.MouseDown || e.button != 0 || e.alt) return;
-
-            ClickMode(world);
-            e.Use();
-            Repaint();
-        }
-
-        static Vector2 MouseWorld(Vector2 guiPos)
-        {
-            var ray = HandleUtility.GUIPointToWorldRay(guiPos);
-            if (Mathf.Abs(ray.direction.z) < 1e-5f) return ray.origin;
-            float t = -ray.origin.z / ray.direction.z;
-            return ray.origin + ray.direction * t;
-        }
+        // ---------- Canvas: click modes ----------
 
         Piece PickPiece(Vector2 world)
         {
@@ -1110,36 +1240,36 @@ namespace RotateRings.EditorTools
             MarkDirty();
         }
 
-        void ClickDelete(Vector2 world)
+        /// <summary>The clamp, link sleeve or arm at this spot, if any.</summary>
+        Component HitAttachment(Vector2 world)
         {
             foreach (var clamp in root.GetComponentsInChildren<PipeClamp>())
                 if (Vector2.Distance(world, clamp.transform.position) < clamp.CollisionRadius)
-                {
-                    Undo.DestroyObjectImmediate(clamp.gameObject);
-                    MarkDirty();
-                    return;
-                }
+                    return clamp;
 
             foreach (var link in root.GetComponentsInChildren<PieceLink>())
                 if (link.sleeve != null && Vector2.Distance(world, link.sleeve.transform.position) < link.sleeveSize.x * 0.5f)
-                {
-                    Undo.DestroyObjectImmediate(link.gameObject);
-                    LevelBuilder.AssignSortingOrders(root);
-                    MarkDirty();
-                    return;
-                }
+                    return link;
 
             foreach (var arm in root.GetComponentsInChildren<PieceArm>())
             {
                 arm.GetSegment(out Vector2 a, out Vector2 b, out float pad);
                 Vector2 ab = b - a;
                 float t = Mathf.Clamp01(Vector2.Dot(world - a, ab) / Mathf.Max(1e-6f, ab.sqrMagnitude));
-                if (Vector2.Distance(world, a + ab * t) < pad * 1.5f)
-                {
-                    Undo.DestroyObjectImmediate(arm.gameObject);
-                    MarkDirty();
-                    return;
-                }
+                if (Vector2.Distance(world, a + ab * t) < pad * 1.5f) return arm;
+            }
+            return null;
+        }
+
+        void ClickDelete(Vector2 world)
+        {
+            var attachment = HitAttachment(world);
+            if (attachment != null)
+            {
+                Undo.DestroyObjectImmediate(attachment.gameObject);
+                LevelBuilder.AssignSortingOrders(root); // a removed link changes the draw order
+                MarkDirty();
+                return;
             }
 
             var piece = PickPiece(world);
@@ -1180,8 +1310,33 @@ namespace RotateRings.EditorTools
             var piece = LevelBuilder.CreatePiece(data, style, root);
             piece.Rebuild();
             Undo.RegisterCreatedObjectUndo(piece.gameObject, "Place " + preset.name);
-            Selection.activeGameObject = piece.gameObject;
+            SelectPieces(new List<Piece> { piece });
             MarkDirty();
+        }
+
+        /// <summary>Reshapes a ring; its arms and every link touching it follow. Closing the gap fully makes it a closed ring.</summary>
+        void SetRing(RingShape ring, float radius, float gap)
+        {
+            ring.radius = Mathf.Clamp(radius, MinRadius, MaxRadius);
+            ring.gapAngle = Mathf.Clamp(gap, 0f, MaxGap);
+            ring.Apply();
+            ring.GetComponent<Piece>().Rebuild();
+            RelayoutAll();
+        }
+
+        /// <summary>Rebuilds a pipe after its points changed; arms, links and clamps on it follow.</summary>
+        void ApplyPipe(PipeShape pipe)
+        {
+            pipe.Apply();
+            pipe.GetComponent<Piece>().Rebuild();
+            RelayoutAll();
+        }
+
+        /// <summary>Two corners on the same spot would leave a zero-length leg with no direction.</summary>
+        static bool TouchesNeighbour(PipeShape pipe, int index, Vector2 point)
+        {
+            bool Near(int i) => i >= 0 && i < pipe.points.Count && Vector2.Distance(point, pipe.points[i]) < MinPipeSegment;
+            return Near(index - 1) || Near(index + 1);
         }
 
         void ApplyArmLayout(Piece piece, ArmLayouts.Layout layout)
@@ -1228,6 +1383,12 @@ namespace RotateRings.EditorTools
                 p.Rebuild();
             }
             MarkDirty();
+        }
+
+        void RotatePiece(Piece piece, float degrees)
+        {
+            SelectPieces(new List<Piece> { piece });
+            RotateSelection(degrees);
         }
 
         void RotateSelection(float degrees)
@@ -1285,9 +1446,9 @@ namespace RotateRings.EditorTools
             MarkDirty();
         }
 
-        void NewLevel()
+        void ClearAll()
         {
-            if (!EditorUtility.DisplayDialog("New level", "Remove every piece under the Level root?", "Clear", "Cancel")) return;
+            if (!EditorUtility.DisplayDialog("Clear All", "Remove every piece from the draft?", "Clear", "Cancel")) return;
             ClearRoot();
         }
 
@@ -1296,6 +1457,7 @@ namespace RotateRings.EditorTools
             for (int i = root.childCount - 1; i >= 0; i--) Undo.DestroyObjectImmediate(root.GetChild(i).gameObject);
             linkFrom = null;
             hover = null;
+            selection.Clear();
             MarkDirty();
         }
 
@@ -1318,12 +1480,89 @@ namespace RotateRings.EditorTools
             if (string.IsNullOrEmpty(full)) return;
             var level = JsonUtility.FromJson<LevelData>(File.ReadAllText(full));
             if (level == null) return;
-            ClearRoot();
-            var map = LevelBuilder.Build(level, style, root);
-            foreach (var p in map.Values) Undo.RegisterCreatedObjectUndo(p.gameObject, "Load Level");
-            foreach (var c in root.GetComponentsInChildren<PipeClamp>(true)) Undo.RegisterCreatedObjectUndo(c.gameObject, "Load Level");
+            ReplaceDraft(level);
             levelName = Path.GetFileNameWithoutExtension(full);
+            FrameSelectionOrAll();
+        }
+
+        void ReplaceDraft(LevelData level)
+        {
+            ClearRoot();
+            BuildUndoable(level, root, "Load Level");
             MarkDirty();
+        }
+
+        void BuildUndoable(LevelData level, Transform target, string undoName)
+        {
+            var map = LevelBuilder.Build(level, style, target);
+            foreach (var p in map.Values) Undo.RegisterCreatedObjectUndo(p.gameObject, undoName);
+            foreach (var c in target.GetComponentsInChildren<PipeClamp>(true)) Undo.RegisterCreatedObjectUndo(c.gameObject, undoName);
+        }
+
+        // ---------- Draft <-> scene ----------
+
+        void OpenDraft()
+        {
+            if (!AssetsReady || Playing) return;
+            draftScene = EditorSceneManager.NewPreviewScene();
+            var go = new GameObject(DraftRootName);
+            SceneManager.MoveGameObjectToScene(go, draftScene);
+            root = go.transform;
+
+            LevelData level = null;
+            if (File.Exists(DraftPath)) level = JsonUtility.FromJson<LevelData>(File.ReadAllText(DraftPath));
+            else if (FindSceneRoot() is { } sceneRoot) level = LevelBuilder.Export(sceneRoot, style, levelName);
+            if (level != null) LevelBuilder.Build(level, style, root);
+        }
+
+        void CloseDraft()
+        {
+            if (root == null) return;
+            if (style != null) File.WriteAllText(DraftPath, JsonUtility.ToJson(LevelBuilder.Export(root, style, levelName), true));
+            root = null;
+            hover = null;
+            linkFrom = null;
+            selection.Clear();
+            EditorSceneManager.ClosePreviewScene(draftScene);
+        }
+
+        /// <summary>Rebuilds the scene's Level root from the draft, as one undo step.</summary>
+        void ApplyToScene()
+        {
+            var sceneRoot = FindSceneRoot();
+            if (sceneRoot == null)
+            {
+                string sceneName = SceneManager.GetActiveScene().name;
+                if (!EditorUtility.DisplayDialog("Apply to Scene", $"Scene '{sceneName}' has no 'Level' root. Create one here (with a play-test camera)?", "Create", "Cancel"))
+                    return;
+                sceneRoot = CreateRoot();
+            }
+
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName("Apply Level");
+            int group = Undo.GetCurrentGroup();
+            for (int i = sceneRoot.childCount - 1; i >= 0; i--) Undo.DestroyObjectImmediate(sceneRoot.GetChild(i).gameObject);
+            BuildUndoable(LevelBuilder.Export(root, style, levelName), sceneRoot, "Apply Level");
+            Undo.CollapseUndoOperations(group);
+
+            EditorSceneManager.MarkSceneDirty(sceneRoot.gameObject.scene);
+            unapplied = false;
+            SceneView.RepaintAll();
+            Debug.Log($"[LevelEditor] Applied the draft to '{sceneRoot.gameObject.scene.name}'.");
+        }
+
+        void PullFromScene()
+        {
+            var sceneRoot = FindSceneRoot();
+            if (sceneRoot == null)
+            {
+                Debug.LogWarning("[LevelEditor] This scene has no 'Level' root.");
+                return;
+            }
+            if (unapplied && !EditorUtility.DisplayDialog("From Scene", "The draft has changes not applied to the scene. Replace it anyway?", "Replace", "Cancel"))
+                return;
+            ReplaceDraft(LevelBuilder.Export(sceneRoot, style, levelName));
+            unapplied = false;
             FrameSelectionOrAll();
         }
 
@@ -1351,7 +1590,7 @@ namespace RotateRings.EditorTools
         /// search was the hardest. Attempts are rejected when a link would start in a ring's gap or a re-rolled ring
         /// overlaps something. Restores the original rotations if nothing solvable turns up.
         /// </summary>
-        void RegenerateSolvable()
+        void RegenerateSolvable(int attempts, float seconds)
         {
             var targets = RerollTargets();
             if (targets.Count == 0)
@@ -1371,10 +1610,10 @@ namespace RotateRings.EditorTools
             var angles = new float[targets.Count];
             try
             {
-                for (int a = 0; a < rerollAttempts; a++)
+                for (int a = 0; a < attempts; a++)
                 {
                     if (EditorUtility.DisplayCancelableProgressBar("Regenerate Solvable",
-                            $"Attempt {a + 1}/{rerollAttempts}  ·  solvable so far: {found}", (float)a / rerollAttempts))
+                            $"Attempt {a + 1}/{attempts}  ·  solvable so far: {found}", (float)a / attempts))
                         break;
                     tried++;
 
@@ -1396,7 +1635,7 @@ namespace RotateRings.EditorTools
                         rejectOverlap++;
                         continue;
                     }
-                    var result = solver.Solve(solveSeconds);
+                    var result = solver.Solve(seconds);
                     if (!result.solved)
                     {
                         if (result.gaveUp) unknown++;
@@ -1431,12 +1670,30 @@ namespace RotateRings.EditorTools
             }
             else
             {
-                solveResult = new LevelSolver(root).Solve(solveSeconds);
+                solveResult = new LevelSolver(root).Solve(seconds);
                 solveResult.note = "Nothing solvable found, rotations restored. " + stats +
                                    (unsolvable == 0 && found == 0 && unknown > 0 ? " Try a larger Max sec." : " The layout itself may be blocked.");
             }
             showSolution = false;
             Debug.Log("[LevelEditor] " + solveResult.Summary);
+        }
+
+        /// <summary>New random layouts until one can be solved; the rotations come from the same re-roll as Regenerate.</summary>
+        void GenerateSample()
+        {
+            if (genRings + genPipes == 0) return;
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName("Generate Sample");
+            int group = Undo.GetCurrentGroup();
+            for (int i = 0; i < GenLayouts; i++)
+            {
+                ReplaceDraft(LevelGenerator.Generate(genRings, genPipes, style));
+                if (RerollTargets().Count > 0) RegenerateSolvable(GenAttempts, GenSolveSeconds);
+                else CheckSolvable(); // nothing to re-roll: only the layout can change
+                if (solveResult.solved) break;
+            }
+            Undo.CollapseUndoOperations(group);
+            FrameSelectionOrAll();
         }
 
         /// <summary>Every link touching a re-rolled ring must sit well inside that ring's arc, not in or at its gap.</summary>
@@ -1470,21 +1727,22 @@ namespace RotateRings.EditorTools
 
         List<Piece> SelectedPieces()
         {
-            var list = new List<Piece>();
-            if (root == null) return list;
-            foreach (var go in Selection.gameObjects)
-            {
-                var p = go.GetComponentInParent<Piece>();
-                if (p != null && !list.Contains(p)) list.Add(p);
-            }
-            return list;
+            selection.RemoveAll(p => p == null); // deleted by an undo
+            return new List<Piece>(selection);
+        }
+
+        /// <summary>The shape whose handles are showing: exactly one piece selected, and it has this shape component.</summary>
+        T SelectedShape<T>() where T : Component
+        {
+            var selected = SelectedPieces();
+            return selected.Count == 1 && selected[0].TryGetComponent<T>(out var shape) ? shape : null;
         }
 
         static float Snap(float v, float step) => step > 0f ? Mathf.Round(v / step) * step : v;
 
         Vector2 SnapPos(Vector2 v) => new(Snap(v.x, grid), Snap(v.y, grid));
 
-        static Transform FindRoot()
+        static Transform FindSceneRoot()
         {
             var go = GameObject.Find(RootName);
             return go != null ? go.transform : null;
@@ -1509,6 +1767,10 @@ namespace RotateRings.EditorTools
             return go.transform;
         }
 
-        static void MarkDirty() => EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        void MarkDirty()
+        {
+            unapplied = true;
+            Repaint();
+        }
     }
 }

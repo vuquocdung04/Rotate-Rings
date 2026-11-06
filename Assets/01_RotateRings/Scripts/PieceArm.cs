@@ -61,7 +61,9 @@ namespace RotateRings
 
         void OnValidate() => dirty = true;
 
-        void LateUpdate()
+        void LateUpdate() => SyncShadow();
+
+        public void SyncShadow()
         {
             if (shadow != null && Parent != null)
                 shadow.transform.position = transform.position + (Vector3)Parent.shadowOffset + new Vector3(0f, 0f, 0.01f);
@@ -108,6 +110,7 @@ namespace RotateRings
             Setup(outline, outlineMesh, Parent.outlineMaterial != null ? Parent.outlineMaterial : Parent.bodyMaterial,
                 Parent.sortingOrder - 2);
             outline.enabled = outlineOn;
+            SyncShadow();
         }
 
         public void SetOutline(bool on)

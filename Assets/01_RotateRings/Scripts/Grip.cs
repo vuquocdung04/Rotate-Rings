@@ -17,6 +17,8 @@ namespace RotateRings
         public abstract Vector2 GripWorldPos { get; }
         /// <summary>Half the grip's length along the held piece: all of it must sit on a straight part to slide.</summary>
         public abstract float HalfLength { get; }
+        /// <summary>Extra distance past the piece's edge before it lets go: the grip's own half width, so its far edge is clear.</summary>
+        public virtual float ReleaseClearance => 0f;
 
         protected void RegisterWithChild()
         {

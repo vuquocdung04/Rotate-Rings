@@ -1,3 +1,4 @@
+using Core.GameUI.Util;
 using UnityEngine;
 
 namespace RotateRings
@@ -15,11 +16,25 @@ namespace RotateRings
         public TextAsset levelJson;
         public PieceStyle style;
         public Camera fitCamera;
+        [Tooltip("Part of the screen the level must fit in. Empty = the whole screen.")]
+        public ScreenArea area;
         [Tooltip("World units of empty space kept around the level when fitting the camera.")]
         public float margin = 0.8f;
+        [Tooltip("Small levels stop zooming in here, so rings keep a similar size from level to level.")]
+        public float minOrthographicSize = 5f;
 
         /// <summary>Level N is the file Resources/Levels/level_00N.json; null if it does not exist.</summary>
         public static TextAsset FindLevel(int number) => Resources.Load<TextAsset>($"{ResourceDir}/level_{number:000}");
+
+        void OnEnable()
+        {
+            if (area != null) area.Changed += FitCamera;
+        }
+
+        void OnDisable()
+        {
+            if (area != null) area.Changed -= FitCamera;
+        }
 
         void Start()
         {
@@ -53,19 +68,33 @@ namespace RotateRings
             if (fitCamera != null) FitCamera();
         }
 
-        /// <summary>Centers the orthographic camera on the pieces and zooms so they fit with a margin.</summary>
+        /// <summary>
+        /// Zooms and moves the orthographic camera so the pieces sit in the middle of the area, with a margin.
+        /// The camera moves, not the level: collisions and link sizes are in world units and would not survive scaling.
+        /// </summary>
         public void FitCamera()
         {
+            if (fitCamera == null) return;
             var renderers = GetComponentsInChildren<MeshRenderer>();
             if (renderers.Length == 0) return;
             var b = renderers[0].bounds;
             foreach (var r in renderers) b.Encapsulate(r.bounds);
 
-            float halfH = b.extents.y + margin;
-            float halfW = (b.extents.x + margin) / Mathf.Max(0.01f, fitCamera.aspect);
-            fitCamera.orthographicSize = Mathf.Max(halfH, halfW);
+            Rect view = area != null ? area.ViewportRect() : new Rect(0f, 0f, 1f, 1f);
+            if (view.width <= 0f || view.height <= 0f) return;
+
+            float aspect = Mathf.Max(0.01f, fitCamera.aspect);
+            float size = Mathf.Max(
+                (b.extents.y + margin) / view.height,
+                (b.extents.x + margin) / (view.width * aspect),
+                minOrthographicSize);
+            fitCamera.orthographicSize = size;
+
+            // How far the area's center sits from the screen's, in world units at this zoom.
+            float offsetX = (view.center.x - 0.5f) * 2f * size * aspect;
+            float offsetY = (view.center.y - 0.5f) * 2f * size;
             var cp = fitCamera.transform.position;
-            fitCamera.transform.position = new Vector3(b.center.x, b.center.y, cp.z);
+            fitCamera.transform.position = new Vector3(b.center.x - offsetX, b.center.y - offsetY, cp.z);
         }
     }
 }

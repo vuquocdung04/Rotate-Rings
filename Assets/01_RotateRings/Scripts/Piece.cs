@@ -21,6 +21,8 @@ namespace RotateRings
     {
         public static readonly List<Piece> All = new();
 
+        bool IsRing => shape.TryGetRingCircle(out _, out _);
+
         [Header("Shape")]
         [Tooltip("Centerline in local space. Usually written by a shape component (RingShape, PipeShape).")]
         public PathShape shape = new();
@@ -454,7 +456,7 @@ namespace RotateRings
         /// Does this piece (body, links, arms) overlap anything else (bodies, links, arms, clamps)?
         /// Everything is probed as circles: along the body centerline, along stems and arms, and one per sleeve.
         /// Pairs that are meant to overlap are skipped: a link vs the child it grips, this body vs grips holding it.
-        /// Both stay skipped after the grip lets go, since the link is left sitting right on the piece's path.
+        /// A link that let go is a plain obstacle: a gap too narrow for two links cannot get past the second one.
         /// </summary>
         bool Overlaps(out Vector2 hit)
         {
@@ -496,7 +498,7 @@ namespace RotateRings
             {
                 if (o == null || o == this || o.IsBroken) continue;
 
-                bool skipBody = fromLink != null && o == fromLink.child;
+                bool skipBody = fromLink != null && o == fromLink.Child;
                 if (!skipBody && o.DistanceToBody(p) < pad + o.thickness * 0.5f)
                 {
                     hit = (p + o.ClosestOnBody(p)) * 0.5f;
@@ -506,7 +508,7 @@ namespace RotateRings
                 foreach (var ol in o.Links)
                 {
                     if (ol == null) continue;
-                    if (fromLink == null && ol.child == this) continue; // grips me, or did: it must not trap me in the gap
+                    if (fromLink == null && ol.Child == this) continue; // grips me by design
                     ol.GetCapsule(out Vector2 oa, out Vector2 ob, out float oStem, out float oSleeve);
                     if (TouchesSegment(p, pad, oa, ob, oStem, out hit)) return true;
                     if (Vector2.Distance(p, ob) < pad + oSleeve)
@@ -556,16 +558,73 @@ namespace RotateRings
 
         // ---------- Grips ----------
 
-        /// <summary>A grip still holds while it sits on the path; past an end (a gap) it has slipped off.</summary>
-        public bool IsGripOnPath(Vector2 world) => shape.closed || DistanceToBody(world) <= thickness * 0.5f;
+        /// <summary>
+        /// A grip holds until the piece has come out of it: measured from the grip's far edge, not its center. The piece
+        /// is only out once the whole sleeve is clear of the body. This also keeps it from overlapping a grip it left,
+        /// since a drag that starts overlapping ignores collisions and would pass straight through.
+        /// </summary>
+        public bool IsGripOnPath(Grip g) =>
+            shape.closed || DistanceToBody(g.GripWorldPos) <= thickness * 0.5f + g.ReleaseClearance;
 
+        /// <summary>Pipes let go one grip at a time. Rings keep theirs until something breaks: see <see cref="SettleAll"/>.</summary>
         void CheckGrips()
         {
-            for (int i = Grips.Count - 1; i >= 0; i--)
+            if (!IsRing)
             {
-                var g = Grips[i];
-                if (g != null && !IsGripOnPath(g.GripWorldPos)) g.Release();
+                for (int i = Grips.Count - 1; i >= 0; i--)
+                {
+                    var g = Grips[i];
+                    if (g != null && !IsGripOnPath(g)) g.Release();
+                }
             }
+            SettleAll();
+        }
+
+        /// <summary>
+        /// A piece goes once everything tied to it is off at the same time: the grips holding it and the links it owns.
+        /// So two rings slipped out of a third's links break it, while each stays held by its other links.
+        /// Until then no link is lost, and a ring can still turn back through any of them.
+        /// </summary>
+        static void SettleAll()
+        {
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var p in new List<Piece>(All))
+                {
+                    if (p == null || p.IsBroken || !p.CanLetGo()) continue;
+                    p.LetGo();
+                    changed = true;
+                }
+            }
+        }
+
+        bool CanLetGo()
+        {
+            bool tied = false;
+            foreach (var g in Grips)
+            {
+                if (g == null) continue;
+                if (IsGripOnPath(g)) return false;
+                tied = true;
+            }
+            foreach (var l in Links)
+            {
+                if (l == null || l.Child == null) continue;
+                if (l.Child.IsGripOnPath(l)) return false;
+                tied = true;
+            }
+            return tied;
+        }
+
+        /// <summary>Works on copies: releasing can change these lists while they are walked.</summary>
+        void LetGo()
+        {
+            foreach (var g in new List<Grip>(Grips))
+                if (g != null) g.Release();
+            foreach (var l in new List<PieceLink>(Links))
+                if (l != null) l.Release();
         }
 
         public void TryBreak()

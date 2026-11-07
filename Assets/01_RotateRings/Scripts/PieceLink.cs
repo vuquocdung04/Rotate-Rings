@@ -12,6 +12,8 @@ namespace RotateRings
     [ExecuteAlways]
     public class PieceLink : Grip
     {
+        const float ReleaseMargin = 0.02f;
+
         public float stemWidth = 0.3f;
         public Vector2 sleeveSize = new(0.6f, 0.45f);
         [Tooltip("Visual nudge of the sleeve (and stem end). x: along the gripped piece, y: along the stem, away from the parent. " +
@@ -25,6 +27,7 @@ namespace RotateRings
         public Piece Parent { get; private set; }
         public override Vector2 GripWorldPos => transform.TransformPoint(gripLocal);
         public override float HalfLength => sleeveSize.x * 0.5f;
+        public override float ReleaseClearance => Mathf.Max(sleeveSize.x, sleeveSize.y) * 0.5f + ReleaseMargin; // sleevePad
 
         Vector2 anchorLocal; // stem root on the parent's centerline, parent local space
         Vector2 gripLocal;   // grip point on the child's centerline, this transform's local space

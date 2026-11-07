@@ -12,7 +12,8 @@ namespace RotateRings.EditorTools
     /// - Only pieces holding no child move: rings rotate, pipes slide along the straight segment their grips sit on.
     /// - Movement is swept at the game's collision step and stops at the first hit (bodies, links, arms, clamps,
     ///   same probes and skip rules). A piece that starts overlapping ignores collisions for that drag.
-    /// - On release, every grip no longer on the path lets go; a piece with no grips and no held children breaks.
+    /// - On release, a pipe's grips no longer on the path let go, and any piece whose grips and links are all off at
+    ///   once lets go of them too; a piece with no grips and no held children breaks.
     /// Solved = every piece broken. Stops are grouped by which grips they release: one move per releasing run,
     /// plus the far ends of non-releasing runs (moving an arm or link out of someone's way).
     /// </summary>
@@ -130,6 +131,7 @@ namespace RotateRings.EditorTools
             public Vector2 sleeve;  // links, owner-local
             public float sleevePad, clampRadius;
             public float halfLength; // Grip.HalfLength
+            public float clearance;  // Grip.ReleaseClearance
             public string label;
         }
 
@@ -203,6 +205,7 @@ namespace RotateRings.EditorTools
                     sleeve = pose.Inverse(b),
                     sleevePad = sleevePad,
                     halfLength = link.HalfLength,
+                    clearance = link.ReleaseClearance,
                     label = "link of " + owner.name,
                 });
             }
@@ -212,7 +215,7 @@ namespace RotateRings.EditorTools
                 if (clamp.child == null || !index.TryGetValue(clamp.child, out int ci)) continue;
                 clamp.Layout();
                 clamps.Add(grips.Count);
-                AddGrip(new SGrip { child = ci, point = clamp.GripWorldPos, clampRadius = clamp.CollisionRadius, halfLength = clamp.HalfLength, label = "clamp" });
+                AddGrip(new SGrip { child = ci, point = clamp.GripWorldPos, clampRadius = clamp.CollisionRadius, halfLength = clamp.HalfLength, clearance = clamp.ReleaseClearance, label = "clamp" });
             }
 
             foreach (var sp in pieces) sp.bound = Bound(sp);
@@ -387,17 +390,57 @@ namespace RotateRings.EditorTools
             else c.off[m] += axis * amount;
 
             var move = new Move { piece = sp.src, rotate = rotate, amount = amount };
-            int score = 0;
-            for (int j = 0; j < sp.grips.Count && j < 64; j++)
+            for (int j = 0; j < sp.grips.Count && j < 64 && !sp.ring; j++)
             {
                 if ((mask & (1UL << j)) == 0) continue;
                 c.attached[sp.grips[j]] = false;
                 move.released.Add(grips[sp.grips[j]].label);
-                score += 1000;
             }
-            Cascade(c, move.broken);
-            score += move.broken.Count * 100;
+            Settle(c, move);
+            int score = move.released.Count * 1000 + move.broken.Count * 100;
             return (c, move, score);
+        }
+
+        /// <summary>Mirrors Piece.SettleAll: a piece goes once its grips and its links are all off at the same time.</summary>
+        void Settle(State s, Move move)
+        {
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                Cascade(s, move.broken);
+                var P = Poses(s);
+                for (int i = 0; i < pieces.Count; i++)
+                {
+                    if (!s.alive[i] || !CanLetGo(i, P, s)) continue;
+                    foreach (int gi in pieces[i].grips.Concat(pieces[i].links))
+                    {
+                        if (!s.attached[gi]) continue;
+                        s.attached[gi] = false;
+                        move.released.Add(grips[gi].label);
+                    }
+                    changed = true;
+                }
+            }
+        }
+
+        bool CanLetGo(int i, Pose[] P, State s)
+        {
+            bool tied = false;
+            foreach (int gi in pieces[i].grips.Concat(pieces[i].links))
+            {
+                if (!s.attached[gi]) continue;
+                if (!GripOff(gi, P)) return false;
+                tied = true;
+            }
+            return tied;
+        }
+
+        bool GripOff(int gi, Pose[] P)
+        {
+            var g = grips[gi];
+            var c = pieces[g.child];
+            return !c.shape.closed && c.shape.Distance(P[g.child].Inverse(GripWorld(gi, P))) > c.half + g.clearance;
         }
 
         /// <summary>Breaks every piece with no grips left and no held children, until nothing changes.</summary>
@@ -497,17 +540,16 @@ namespace RotateRings.EditorTools
             return sp.shape.DistanceToLines(local) <= BendTolerance || sp.shape.IsEndPoint(sp.shape.ClosestPoint(local, out _));
         }
 
-        /// <summary>Grips (bit = index in the piece's grip list) that would let go if released at this pose.</summary>
+        /// <summary>
+        /// Grips (bit = index in the piece's grip list) off the path at this pose. Pipes let those go; a ring only parks
+        /// here, since another ring may need it out of a shared parent's link, so each mask is a stop worth trying.
+        /// </summary>
         ulong ReleaseMask(int m, Pose[] P, State s)
         {
             var sp = pieces[m];
-            if (sp.shape.closed) return 0;
             ulong mask = 0;
             for (int j = 0; j < sp.grips.Count && j < 64; j++)
-            {
-                int gi = sp.grips[j];
-                if (s.attached[gi] && sp.shape.Distance(P[m].Inverse(GripWorld(gi, P))) > sp.half) mask |= 1UL << j;
-            }
+                if (s.attached[sp.grips[j]] && GripOff(sp.grips[j], P)) mask |= 1UL << j;
             return mask;
         }
 
@@ -560,13 +602,13 @@ namespace RotateRings.EditorTools
                 float r = so.bound + pad;
                 if ((p - po.t).sqrMagnitude > r * r) continue;
 
-                bool skipBody = fromLink >= 0 && grips[fromLink].child == o;
+                bool skipBody = fromLink >= 0 && s.attached[fromLink] && grips[fromLink].child == o;
                 if (!skipBody && so.shape.Distance(po.Inverse(p)) < pad + so.half) return true;
 
                 foreach (int gi in so.links)
                 {
                     var g = grips[gi];
-                    if (fromLink < 0 && g.child == m) continue; // grips the mover, or did
+                    if (fromLink < 0 && s.attached[gi] && g.child == m) continue; // grips the mover by design
                     if (SegmentDistance(p, po.Apply(g.stem.a), po.Apply(g.stem.b)) < pad + g.stem.pad) return true;
                     if (Vector2.Distance(p, po.Apply(g.sleeve)) < pad + g.sleevePad) return true;
                 }

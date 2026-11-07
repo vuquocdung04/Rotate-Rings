@@ -45,7 +45,7 @@
             "color": 0,
             "finish": 0,
             "radius": 1.35,
-            "gapAngle": 90.0,
+            "gapAngle": 125.0,
             "gapCenter": 90.0,
             "points": [],
             "cornerRadius": 0.4
@@ -61,7 +61,7 @@
             "color": 1,
             "finish": 0,
             "radius": 1.35,
-            "gapAngle": 90.0,
+            "gapAngle": 125.0,
             "gapCenter": 90.0,
             "points": [],
             "cornerRadius": 0.4
@@ -109,7 +109,7 @@
             "color": 5,
             "finish": 0,
             "radius": 1.35,
-            "gapAngle": 90.0,
+            "gapAngle": 155.0,
             "gapCenter": 90.0,
             "points": [],
             "cornerRadius": 0.4

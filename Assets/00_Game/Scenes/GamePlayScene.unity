@@ -257,6 +257,7 @@ GameObject:
   m_Component:
   - component: {fileID: 615497552}
   - component: {fileID: 615497551}
+  - component: {fileID: 615497553}
   m_Layer: 0
   m_Name: Level
   m_TagString: Untagged
@@ -279,7 +280,9 @@ MonoBehaviour:
   levelJson: {fileID: 0}
   style: {fileID: 11400000, guid: 22da09bc07208c24e9304568c8051402, type: 2}
   fitCamera: {fileID: 1813584726}
-  margin: 0.8
+  area: {fileID: 615497553}
+  margin: 0
+  minOrthographicSize: 5
 --- !u!4 &615497552
 Transform:
   m_ObjectHideFlags: 0
@@ -295,6 +298,26 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &615497553
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 615497550}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4f247ae3d427b5141a815c2bd5e08f99, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Core.GameUI.Util.ScreenArea
+  targetCamera: {fileID: 1813584726}
+  useSafeArea: 1
+  widthPercent: 0.9
+  bottomPercent: 0.0212
+  topPercent: 0.96269995
+  drawGizmos: 1
+  gizmoColor: {r: 1, g: 0.55, b: 0.1, a: 1}
+  gizmoFillAlpha: 0.12
 --- !u!1 &650407773
 GameObject:
   m_ObjectHideFlags: 0

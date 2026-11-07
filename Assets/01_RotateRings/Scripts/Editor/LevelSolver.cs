@@ -16,6 +16,7 @@ namespace RotateRings.EditorTools
     ///   once lets go of them too; a piece with no grips and no held children breaks.
     /// Solved = every piece broken. Stops are grouped by which grips they release: one move per releasing run,
     /// plus the far ends of non-releasing runs (moving an arm or link out of someone's way).
+    /// The search goes stage by stage: the fewest moves to the next release or break, then solve again from there.
     /// </summary>
     public class LevelSolver
     {
@@ -274,20 +275,21 @@ namespace RotateRings.EditorTools
             var res = new Result();
             res.overlapping.AddRange(OverlappingAtStart());
             var sw = Stopwatch.StartNew();
-            var visited = new HashSet<string>();
-            int maxDepth = 2 * (pieces.Count + grips.Count) + 16;
+            var stages = new HashSet<string>();
+            int explored = 0;
             int fewestAlive = int.MaxValue;
             State furthest = start;
 
-            res.solved = Dfs(start, 0);
-            res.states = visited.Count;
+            res.solved = SolveFrom(start);
+            res.states = explored;
             res.seconds = (float)sw.Elapsed.TotalSeconds;
             if (!res.solved)
                 for (int i = 0; i < pieces.Count; i++)
                     if (furthest.alive[i]) res.stuck.Add(pieces[i].src);
             return res;
 
-            bool Dfs(State s, int depth)
+            // One stage: the nearest change, then solve again from there. Other changes are only tried on a dead end.
+            bool SolveFrom(State s)
             {
                 int alive = s.alive.Count(a => a);
                 if (alive == 0) return true;
@@ -296,22 +298,45 @@ namespace RotateRings.EditorTools
                     fewestAlive = alive;
                     furthest = s;
                 }
-                if (depth >= maxDepth) return false;
-                if (visited.Count >= maxStates || sw.Elapsed.TotalSeconds > maxSeconds)
-                {
-                    res.gaveUp = true;
-                    return false;
-                }
-                if (!visited.Add(Key(s))) return false;
+                if (!stages.Add(Key(s))) return false;
 
-                foreach (var (child, move) in Expand(s))
+                foreach (var (next, path) in NextChanges(s))
                 {
-                    res.moves.Add(move);
-                    if (Dfs(child, depth + 1)) return true;
-                    res.moves.RemoveAt(res.moves.Count - 1);
+                    res.moves.AddRange(path);
+                    if (SolveFrom(next)) return true;
+                    res.moves.RemoveRange(res.moves.Count - path.Count, path.Count);
                     if (res.gaveUp) return false;
                 }
                 return false;
+            }
+
+            // Breadth first over moves that change nothing yet (rings parked out of a link), so several pieces can set
+            // up one release together. Yields every release or break it reaches, the fewest moves first.
+            IEnumerable<(State state, List<Move> path)> NextChanges(State from)
+            {
+                var seen = new HashSet<string> { Key(from) };
+                var queue = new Queue<(State state, List<Move> path)>();
+                queue.Enqueue((from, new List<Move>()));
+                while (queue.Count > 0)
+                {
+                    if (explored >= maxStates || sw.Elapsed.TotalSeconds > maxSeconds)
+                    {
+                        res.gaveUp = true;
+                        yield break;
+                    }
+                    var (s, path) = queue.Dequeue();
+                    explored++;
+                    foreach (var (child, move) in Expand(s))
+                    {
+                        var childPath = new List<Move>(path) { move };
+                        if (move.released.Count > 0 || move.broken.Count > 0)
+                        {
+                            yield return (child, childPath);
+                            if (res.gaveUp) yield break;
+                        }
+                        else if (seen.Add(Key(child))) queue.Enqueue((child, childPath));
+                    }
+                }
             }
         }
 
@@ -348,8 +373,15 @@ namespace RotateRings.EditorTools
                 var sp = pieces[m];
                 Pose basePose = P[m];
                 bool ignore = Overlaps(m, P, s);
-                float step = rotate ? RotStep : SlideStep;
-                int maxK = rotate ? Mathf.CeilToInt(180f / RotStep) : Mathf.CeilToInt((sp.shape.Length + 1f) / SlideStep);
+                if (rotate)
+                {
+                    foreach (var (amount, stopMask) in RingStops(m, axis, P, s, ignore))
+                        found.Add(MakeMove(s, m, true, axis, amount, stopMask));
+                    continue;
+                }
+
+                float step = SlideStep;
+                int maxK = Mathf.CeilToInt((sp.shape.Length + 1f) / SlideStep);
 
                 seq.Clear();
                 for (int k = 1; k <= maxK && TryPose(m, -k * step, rotate, axis, P, s, ignore, out ulong mask); k++)
@@ -381,6 +413,68 @@ namespace RotateRings.EditorTools
 
             return found.OrderByDescending(f => f.score).Select(f => (f.state, f.move)).ToList();
         }
+
+        /// <summary>
+        /// Where a ring can usefully stop: the middle of each stretch with the same grips off, or both ends of a stretch
+        /// with none off (to swing an arm or the gap out of someone's way). Stretches are found on the whole circle in
+        /// absolute angles, so a ring gets the same stops wherever it starts and turning it never looks like a new state.
+        /// </summary>
+        List<(float amount, ulong mask)> RingStops(int m, Vector2 axis, Pose[] P, State s, bool ignore)
+        {
+            int n = Mathf.RoundToInt(360f / RotStep);
+            int cur = Wrap(Mathf.RoundToInt(s.ang[m] / RotStep), n);
+            var reached = new bool[n];
+            var masks = new ulong[n];
+            var ticks = new int[n]; // shortest signed turn to get there
+            Pose basePose = P[m];
+            reached[cur] = true;
+            masks[cur] = ReleaseMask(m, P, s);
+
+            foreach (int dir in new[] { 1, -1 })
+            {
+                for (int k = 1; k < n; k++)
+                {
+                    int i = Wrap(cur + dir * k, n);
+                    if (reached[i] && Mathf.Abs(ticks[i]) <= k && i != cur) break;
+                    if (!TryPose(m, dir * k * RotStep, true, axis, P, s, ignore, out ulong mask)) break;
+                    reached[i] = true;
+                    masks[i] = mask;
+                    ticks[i] = dir * k;
+                }
+            }
+            P[m] = basePose;
+
+            var stops = new List<(float, ulong)>();
+            int first = -1;
+            for (int i = 0; i < n && first < 0; i++)
+            {
+                int prev = Wrap(i - 1, n);
+                if (reached[i] && (!reached[prev] || masks[prev] != masks[i])) first = i;
+            }
+            if (first < 0) return stops; // one stretch all the way round: nothing to choose
+
+            for (int off = 0; off < n; off++)
+            {
+                int a = Wrap(first + off, n);
+                if (!reached[a]) continue;
+                int len = 1;
+                while (off + len < n && reached[Wrap(a + len, n)] && masks[Wrap(a + len, n)] == masks[a]) len++;
+                off += len - 1;
+
+                bool here = Wrap(cur - a, n) < len;
+                if (masks[a] != 0)
+                {
+                    if (!here) stops.Add((ticks[Wrap(a + len / 2, n)] * RotStep, masks[a]));
+                    continue;
+                }
+                if (a != cur) stops.Add((ticks[a] * RotStep, 0UL));
+                int b = Wrap(a + len - 1, n);
+                if (b != a && b != cur) stops.Add((ticks[b] * RotStep, 0UL));
+            }
+            return stops;
+        }
+
+        static int Wrap(int i, int n) => (i % n + n) % n;
 
         (State, Move, int) MakeMove(State s, int m, bool rotate, Vector2 axis, float amount, ulong mask)
         {

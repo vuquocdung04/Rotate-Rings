@@ -1,0 +1,74 @@
+{
+    "version": 1,
+    "name": "level_002",
+    "pieces": [
+        {
+            "id": "p0",
+            "kind": 0,
+            "pos": {
+                "x": -1.75,
+                "y": 1.75
+            },
+            "rot": 60.0,
+            "color": 1,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p1",
+            "kind": 0,
+            "pos": {
+                "x": 1.75,
+                "y": 1.75
+            },
+            "rot": 300.0,
+            "color": 0,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p2",
+            "kind": 0,
+            "pos": {
+                "x": 0,
+                "y": -1.25
+            },
+            "rot": 180.0,
+            "color": 2,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        }
+    ],
+    "links": [
+        {
+            "parent": "p0",
+            "child": "p1",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p2",
+            "child": "p0",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        }
+    ],
+    "arms": [],
+    "clamps": []
+}

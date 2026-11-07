@@ -1,0 +1,186 @@
+{
+    "version": 1,
+    "name": "level_004",
+    "pieces": [
+        {
+            "id": "p0",
+            "kind": 0,
+            "pos": {
+                "x": 0,
+                "y": 0
+            },
+            "rot": 0.0,
+            "color": 2,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 0.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p1",
+            "kind": 0,
+            "pos": {
+                "x": 0,
+                "y": 5
+            },
+            "rot": 0.0,
+            "color": 9,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p2",
+            "kind": 0,
+            "pos": {
+                "x": -2.5,
+                "y": 2.5
+            },
+            "rot": 60.0,
+            "color": 0,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p3",
+            "kind": 0,
+            "pos": {
+                "x": 2.5,
+                "y": 2.5
+            },
+            "rot": 300.0,
+            "color": 1,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p4",
+            "kind": 0,
+            "pos": {
+                "x": -3,
+                "y": -1.75
+            },
+            "rot": 120.0,
+            "color": 3,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p5",
+            "kind": 0,
+            "pos": {
+                "x": 3,
+                "y": -1.75
+            },
+            "rot": 240.0,
+            "color": 4,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        },
+        {
+            "id": "p6",
+            "kind": 0,
+            "pos": {
+                "x": 0,
+                "y": -3.5
+            },
+            "rot": 180.0,
+            "color": 5,
+            "finish": 0,
+            "radius": 1.35,
+            "gapAngle": 90.0,
+            "gapCenter": 90.0,
+            "points": [],
+            "cornerRadius": 0.4
+        }
+    ],
+    "links": [
+        {
+            "parent": "p0",
+            "child": "p2",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p0",
+            "child": "p3",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p0",
+            "child": "p4",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p0",
+            "child": "p5",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p1",
+            "child": "p2",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p1",
+            "child": "p3",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p4",
+            "child": "p6",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        },
+        {
+            "parent": "p5",
+            "child": "p6",
+            "sleeveOffset": {
+                "x": 0.0,
+                "y": 0.03
+            }
+        }
+    ],
+    "arms": [],
+    "clamps": []
+}

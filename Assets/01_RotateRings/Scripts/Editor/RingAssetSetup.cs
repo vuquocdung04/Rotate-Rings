@@ -29,6 +29,7 @@ namespace RotateRings.EditorTools
             new(0.3f, 0.75f, 0.95f),  // light blue
             new(0.98f, 0.78f, 0.15f), // yellow
             new(0.95f, 0.42f, 0.65f), // pink
+            new(0.12f, 0.57f, 0.36f), // dark green
         };
 
         struct Mats

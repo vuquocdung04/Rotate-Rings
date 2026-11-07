@@ -156,11 +156,13 @@ namespace RotateRings
 
         // ---------- Scene -> data ----------
 
-        public static LevelData Export(Transform root, PieceStyle style, string levelName)
+        /// <param name="only">Export just these pieces; links and clamps reaching outside them are left out.</param>
+        public static LevelData Export(Transform root, PieceStyle style, string levelName, List<Piece> only = null)
         {
             var level = new LevelData { name = levelName };
             var ids = new Dictionary<Piece, string>();
             var pieces = root.GetComponentsInChildren<Piece>(true);
+            if (only != null) pieces = System.Array.FindAll(pieces, only.Contains);
             for (int i = 0; i < pieces.Length; i++) ids[pieces[i]] = "p" + i;
 
             foreach (var p in pieces)

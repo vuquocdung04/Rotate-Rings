@@ -454,6 +454,7 @@ namespace RotateRings
         /// Does this piece (body, links, arms) overlap anything else (bodies, links, arms, clamps)?
         /// Everything is probed as circles: along the body centerline, along stems and arms, and one per sleeve.
         /// Pairs that are meant to overlap are skipped: a link vs the child it grips, this body vs grips holding it.
+        /// Both stay skipped after the grip lets go, since the link is left sitting right on the piece's path.
         /// </summary>
         bool Overlaps(out Vector2 hit)
         {
@@ -495,7 +496,7 @@ namespace RotateRings
             {
                 if (o == null || o == this || o.IsBroken) continue;
 
-                bool skipBody = fromLink != null && o == fromLink.Child;
+                bool skipBody = fromLink != null && o == fromLink.child;
                 if (!skipBody && o.DistanceToBody(p) < pad + o.thickness * 0.5f)
                 {
                     hit = (p + o.ClosestOnBody(p)) * 0.5f;
@@ -505,7 +506,7 @@ namespace RotateRings
                 foreach (var ol in o.Links)
                 {
                     if (ol == null) continue;
-                    if (fromLink == null && ol.Child == this) continue; // grips me by design
+                    if (fromLink == null && ol.child == this) continue; // grips me, or did: it must not trap me in the gap
                     ol.GetCapsule(out Vector2 oa, out Vector2 ob, out float oStem, out float oSleeve);
                     if (TouchesSegment(p, pad, oa, ob, oStem, out hit)) return true;
                     if (Vector2.Distance(p, ob) < pad + oSleeve)

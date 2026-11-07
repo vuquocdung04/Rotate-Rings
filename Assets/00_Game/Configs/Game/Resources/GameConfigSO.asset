@@ -14,4 +14,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::GameConfigSO
   targetFrameRate: 60
   testing: 1
-  levelTest: 2
+  levelTest: 3

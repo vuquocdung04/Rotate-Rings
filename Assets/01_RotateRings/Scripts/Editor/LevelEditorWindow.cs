@@ -21,7 +21,7 @@ namespace RotateRings.EditorTools
     {
         enum DragOp { None, Pan, Move, Arm, Clamp, RingRadius, RingGap, RingRotate, PipePoint }
 
-        const string LevelsDir = "Assets/01_RotateRings/Levels";
+        const string LevelsDir = "Assets/01_RotateRings/Resources/" + LevelLoader.ResourceDir;
         const string RootName = "Level";
         const string DraftRootName = "LevelDraft";
         const string DraftPath = "Library/RotateRingsLevelDraft.json";
@@ -36,6 +36,7 @@ namespace RotateRings.EditorTools
         const float MaxCornerRadius = 2f, MinPipeSegment = 0.05f;
         const float HandlePickPixels = 9f;
         const float RotateHandlePixels = 28f; // past the ring's outer edge
+        const float DuplicateOffset = 1f;
         static readonly int CanvasControlHint = "RotateRingsLevelCanvas".GetHashCode();
         const int MaxGenRings = 12, MaxGenPipes = 8;
         const int GenLayouts = 6, GenAttempts = 12; // layouts tried, rotation rolls per layout
@@ -286,7 +287,7 @@ namespace RotateRings.EditorTools
                 if (linkFrom != null) return $"Link: parent {linkFrom.name}, now click the CHILD. Esc cancels.";
                 if (SelectedShape<RingShape>() != null) return "Ring: green dot rotates, blue dot resizes, pink dots open the gap (Ctrl: no snap)";
                 if (SelectedShape<PipeShape>() != null) return "Pipe: drag a yellow dot to bend, a small dot to add a corner · Shift+click a yellow dot removes it (Ctrl: no snap)";
-                return "Right-click a piece: arm / clamp / link / delete · Drag: move (Ctrl: no snap) · Shift: add · Q/E rotate · arrows nudge · Del · F frame · wheel zoom · RMB/MMB drag pan";
+                return "Right-click a piece: arm / clamp / link / duplicate / delete · Drag: move (Ctrl: no snap) · Shift: add · Q/E rotate · arrows nudge · Del · F frame · wheel zoom · RMB/MMB drag pan";
             }
         }
 
@@ -773,6 +774,11 @@ namespace RotateRings.EditorTools
                 if (piece.GetComponentInChildren<PieceArm>() != null)
                     menu.AddItem(new GUIContent("Clear Arms"), false, () => ClearArms(piece));
                 menu.AddSeparator("");
+
+                var selected = SelectedPieces();
+                var copies = selected.Contains(piece) ? selected : new List<Piece> { piece };
+                string label = copies.Count > 1 ? $"Duplicate {copies.Count} Pieces" : "Duplicate";
+                menu.AddItem(new GUIContent(label), false, () => DuplicatePieces(copies));
             }
             string target = attachment switch
             {
@@ -1385,6 +1391,22 @@ namespace RotateRings.EditorTools
             MarkDirty();
         }
 
+        /// <summary>
+        /// Copies the pieces with their arms, clamps and the links between them, shifted so the copy is visible, and
+        /// selects the copy. Links to pieces left out are not copied: they only fit at the original spot.
+        /// </summary>
+        void DuplicatePieces(List<Piece> pieces)
+        {
+            var level = LevelBuilder.Export(root, style, levelName, pieces);
+            float offset = Mathf.Max(grid, Snap(DuplicateOffset, grid));
+            var shift = new Vector2(offset, -offset);
+            foreach (var p in level.pieces) p.pos += shift;
+            foreach (var c in level.clamps) c.pos += shift;
+
+            SelectPieces(new List<Piece>(BuildUndoable(level, root, "Duplicate").Values));
+            MarkDirty();
+        }
+
         void RotatePiece(Piece piece, float degrees)
         {
             SelectPieces(new List<Piece> { piece });
@@ -1492,11 +1514,14 @@ namespace RotateRings.EditorTools
             MarkDirty();
         }
 
-        void BuildUndoable(LevelData level, Transform target, string undoName)
+        /// <summary>Only what this build created is registered: the target may already hold other clamps.</summary>
+        Dictionary<string, Piece> BuildUndoable(LevelData level, Transform target, string undoName)
         {
             var map = LevelBuilder.Build(level, style, target);
             foreach (var p in map.Values) Undo.RegisterCreatedObjectUndo(p.gameObject, undoName);
-            foreach (var c in target.GetComponentsInChildren<PipeClamp>(true)) Undo.RegisterCreatedObjectUndo(c.gameObject, undoName);
+            foreach (var c in target.GetComponentsInChildren<PipeClamp>(true))
+                if (map.ContainsValue(c.child)) Undo.RegisterCreatedObjectUndo(c.gameObject, undoName);
+            return map;
         }
 
         // ---------- Draft <-> scene ----------

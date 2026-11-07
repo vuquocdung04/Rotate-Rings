@@ -560,13 +560,13 @@ namespace RotateRings.EditorTools
                 float r = so.bound + pad;
                 if ((p - po.t).sqrMagnitude > r * r) continue;
 
-                bool skipBody = fromLink >= 0 && s.attached[fromLink] && grips[fromLink].child == o;
+                bool skipBody = fromLink >= 0 && grips[fromLink].child == o;
                 if (!skipBody && so.shape.Distance(po.Inverse(p)) < pad + so.half) return true;
 
                 foreach (int gi in so.links)
                 {
                     var g = grips[gi];
-                    if (fromLink < 0 && s.attached[gi] && g.child == m) continue; // grips the mover by design
+                    if (fromLink < 0 && g.child == m) continue; // grips the mover, or did
                     if (SegmentDistance(p, po.Apply(g.stem.a), po.Apply(g.stem.b)) < pad + g.stem.pad) return true;
                     if (Vector2.Distance(p, po.Apply(g.sleeve)) < pad + g.sleevePad) return true;
                 }
